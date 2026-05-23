@@ -1,0 +1,22 @@
+# --- Runtime state (managed by Copilot CLI) ---
+config.json
+permissions-config.json
+command-history-state.json
+command-history-state/
+session-state/
+session-store.db
+session-store.db-shm
+session-store.db-wal
+logs/
+ide/
+restart/
+installed-plugins/
+plugin-data/
+vscode.session.metadata.cache.json
+
+# --- Machine-local secrets (sourced by bin/*-wrapper.sh) ---
+secrets/
+
+# --- Editor noise ---
+.DS_Store
+*.swp
