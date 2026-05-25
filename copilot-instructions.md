@@ -27,4 +27,6 @@ Injected into every Copilot CLI session. Budget is precious here:
 
 - `~/dotfiles` — machine env (Brewfile, zsh, editors), GNU stow.
 - `~/.copilot` — this AI brain (skills, agents, MCP, instructions).
-- For changes to either, or to MCP/skill/agent configuration, the `dotfiles-helper` skill has the conventions and recipes. Prefer loading it over guessing.
+- `~/code/homelab` (`masonmem/homelab`) — GitOps source of truth for hyperion (QNAP) + solaris (Mac Mini) docker stacks; orchestrated by Komodo.
+- `~/code/home-network` (`masonmem/home-network`) — network design + UniFi docs only (NOT stacks; those live in `homelab`).
+- For dotfiles/copilot changes, the `dotfiles-helper` skill has the conventions. For homelab/stack/ollama/BYOK changes, the `homelab-helper` skill does. Prefer loading them over guessing.

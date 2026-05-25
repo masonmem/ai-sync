@@ -96,3 +96,7 @@ After adding, run `/skills reload` (no need to restart the CLI).
 - Conventional commit prefix; scope optional but encouraged (e.g. `feat(zsh): add pip alias`).
 - **Never** add a `Co-authored-by: Copilot` trailer — this is an explicit user preference.
 - For changes that span both repos (e.g. install a tool *and* wire its MCP server), commit each repo separately with clear, parallel commit messages.
+
+## Related skills
+
+- **`homelab-helper`** (global) — for anything that runs as a long-lived service on hyperion (QNAP) or solaris (Mac Mini). New docker stack, ollama model, BYOK provider key, Caddy route → that skill, not this one. This skill stays focused on **Mac client** machine env.
