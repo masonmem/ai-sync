@@ -30,4 +30,10 @@ set -a
 . "${SECRETS_FILE}"
 set +a
 
+# The unifi-mcp-server writes audit.log into its cwd. Run it from a dedicated
+# state dir so the log doesn't land in whichever repo the user is working in.
+STATE_DIR="${HOME}/.copilot/state/unifi-mcp"
+mkdir -p "${STATE_DIR}"
+cd "${STATE_DIR}"
+
 exec unifi-mcp-server "$@"

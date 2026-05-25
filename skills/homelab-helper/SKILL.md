@@ -78,7 +78,7 @@ git commit -am "feat(litellm): add anthropic byok key"
 git push
 ```
 
-Komodo Periphery on solaris will pull, decrypt to `secrets.env`, and restart LiteLLM. The model is reachable via the LiteLLM virtual model name (e.g. `cloud/sonnet`) once configured in `litellm-config.yaml`.
+Komodo Periphery on solaris will pull, decrypt to `secrets.env`, and restart LiteLLM. The model is reachable via the LiteLLM virtual model name (e.g. `cloud/sonnet-4.5`) once configured in `litellm-config.yaml`.
 
 ## Escape hatches (use only when Komodo is the problem)
 
