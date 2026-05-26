@@ -30,8 +30,8 @@ If the change is "thing X is running on hyperion or solaris," it's in `homelab`.
 | Copilot skill (project) | `<repo>/.copilot/skills/<name>/SKILL.md` | Auto-discovered |
 | **New stack on hyperion** | `homelab/hyperion/<stack>/{compose.yml, secrets.env.sops}` + Komodo Stack resource in `homelab/komodo/` | Push → Komodo syncs |
 | **New stack on solaris** | `homelab/solaris/<stack>/{compose.yml, secrets.env.sops}` + Komodo Stack resource | Push → Komodo syncs |
-| **New ollama model** | `homelab/solaris/ollama/models.txt` (launchd `ollama-sync.sh` reconciles) | Next sync tick |
-| **BYOK API key (Anthropic/OpenAI/etc.)** | `homelab/solaris/litellm/secrets.env.sops` via `sops edit` | LiteLLM restart on Komodo redeploy |
+| **New ollama model** | `homelab/solaris/ollama/modelfiles/<name>.Modelfile` + `apply.sh` entry + `solaris/litellm/config.yaml` entry + `dotfiles/ollama/.config/opencode/opencode.jsonc` entry | Run apply.sh on solaris, restart litellm |
+| **BYOK API key (Anthropic/OpenAI/Gemini/…)** | Edit `[secrets]` in solaris `periphery.config.toml` → kickstart Periphery → add model entry in `solaris/litellm/config.yaml` → `komodo.py deploy litellm` | Available at `cloud/<provider>-<short>-Nx` |
 | BYOK key for local Copilot CLI tools | `~/.copilot/secrets/<provider>.env` (per `dotfiles-helper`) — these are *client-side*, not the gateway | — |
 | UniFi / network change | `home-network` (docs) + UniFi UI (live state via `unifi` MCP) | — |
 | **Caddy reverse-proxy entry** | `homelab/hyperion/infra/Caddyfile` | Push → Caddy reloads (compose `exec caddy reload`) |
@@ -40,51 +40,60 @@ If the change is "thing X is running on hyperion or solaris," it's in `homelab`.
 ## Hard rules (anti-rules)
 
 1. **No `:latest` image tags, ever.** Including Komodo Core + Periphery — they're pinned to `vX.Y.Z@sha256:...` and bumped in lockstep in a `control-plane`-labeled PR with release-notes review.
-2. **No plaintext secrets in git.** Two mechanisms:
-   - **Hyperion:** Komodo-native Periphery secrets (defined in the Periphery config file on the host, never in git). Per-host blast radius, no network exposure, no API exposure.
-   - **Solaris + anything portable:** SOPS + age. Decrypt target is **`secrets.env`** (NOT `.env` — that name is owned by Komodo's `[[VARIABLE]]` interpolation). Both files pass to compose via separate `--env-file` flags.
-3. **Two age recipients on every `.sops.yaml` creation rule:** the host key + the admin key. Admin key (offline / 1Password) lets you `sops edit` from a laptop without ever pulling a host's private key.
-4. **No Watchtower on Komodo-managed stacks.** Renovate is the bump mechanism.
-5. **Don't migrate Caddy or `monitor` without an escape hatch.** They're the front door and the observatory; they're the last two stacks migrated for a reason.
-6. **No SSH-and-hand-edit on hyperion/solaris** for anything that should be reproducible. That's an emergency-only path; if you used it, file a follow-up to fold the change back into git.
-7. **LiteLLM model namespaces are explicit:** `local/*` (ollama, private) vs `cloud/*` (BYOK, leaves tailnet). **No silent auto-promotion.** The `--escalate` flag on `copilotp` is the explicit, per-invocation, stderr-warned middle ground.
-8. **Ollama on solaris listens on `0.0.0.0:11434`** (via `~/Library/LaunchAgents/com.user.ollama-env.plist` setting `OLLAMA_HOST`). LiteLLM reaches it via `host.docker.internal:11434` (loopback). Off-host clients use the MagicDNS name, not a hardcoded tailnet IP.
+2. **No plaintext secrets in git.** SOPS was dropped in Round 13 (tradeoff in `docs/security.md`). Today all secrets are **Komodo Periphery `[secrets]` blocks** in `periphery.config.toml` on each host — chmod 600, plaintext on disk, never in git. Keychain is the cross-machine backup. See `docs/security.md` § "Editing a Komodo Periphery secret" for the gotcha (Komodo v2.2.0 has no Secrets UI).
+3. **No Watchtower on Komodo-managed stacks.** Renovate is the bump mechanism.
+4. **Don't migrate Caddy or `monitor` without an escape hatch.** They're the front door and the observatory; they're the last two stacks migrated for a reason.
+5. **No SSH-and-hand-edit on hyperion/solaris** for anything that should be reproducible. That's an emergency-only path; if you used it, file a follow-up to fold the change back into git.
+6. **LiteLLM model namespaces are explicit:** `local/*-0x` (ollama, free) vs `cloud/<provider>-*-Nx` (BYOK, leaves tailnet, $/Mtok ≈ N; provider = `claude`, `gemini`, …). No silent auto-promotion — clients pick the namespace, or use `auto` for "default to local + escalate on overflow".
+7. **Ollama on solaris listens on `0.0.0.0:11434`** (via `~/Library/LaunchAgents/com.user.ollama-env.plist`). LiteLLM reaches it via `host.docker.internal:11434`. Off-host clients use the MagicDNS name.
+8. **LiteLLM config changes require a full `docker restart litellm`** — the in-process reloader silently ignores new fields (logs `'str' object has no attribute 'get'`). Komodo redeploy via `scripts/komodo.py deploy litellm` works; a bare `compose up` does not if nothing else changed.
+9. **Periphery secret rotation requires `komodo.py deploy <stack>`.** Editing `periphery.config.toml` alone won't recreate the container. The running container keeps its old env until you force-recreate. Round 25's Open WebUI miss is the cautionary tale.
+10. **Periphery secrets must ALSO be declared in the stack `environment` block.** Komodo's "Write Environment File" step only materialises secrets that appear in the consuming stack's `environment = """..."""` block in `komodo/resources/*-stacks.toml`. Adding a key to `[secrets]` alone is silent — the container env stays empty. Round 28's missing `GEMINI_API_KEY` is the cautionary tale.
+11. **LiteLLM model REMOVAL requires `docker restart litellm`** (not just `compose up`). The model_group cache is in-process; removed entries linger in `/v1/models` until the process restarts. Round 29 gemini-pro removal verified this.
+12. **Cloud free-tier surprises silently fall back.** Mason's Google AI project has free-tier limit=0 on Gemini Pro 2.5; with fallbacks configured, the request silently serves Flash instead, skewing usage dashboards. When adding a cloud model to `litellm/config.yaml`, verify the provider's free-tier quota for that exact model id, and either (a) only expose models with real free quota, or (b) remove fallback chains for paid-only models so failures surface loudly. To diagnose: `curl … -H "x-litellm-disable-fallbacks: true"`.
+13. **Ollama auto-thinking eats short replies** on any model whose Modelfile advertises the `thinking` capability (gemma4, qwen3-abliterated, granite, llama-vision, …). Set `reasoning_effort: none` in the LiteLLM model entry — LiteLLM's Ollama adapter maps that to Ollama's `think: false`. Leave reasoning on for qwen3-14b / deepseek-r1-14b and ensure clients send `max_tokens ≥ 800`. See `docs/models.md` § "Known model oddities". Gemini 2.5 has the same trap upstream: it spends ~20 tokens on internal reasoning before text — set `max_tokens ≥ ~50` even for one-word replies.
 
 ## Adding a new docker stack
 
 ```
 homelab/<host>/<stack>/
-  compose.yml          # Image pinned to <tag>@sha256:<digest>; references ${VAR:?err} for everything
-  .env.example         # Documents required vars; never the real .env
-  secrets.env.sops     # SOPS-encrypted (solaris only); for hyperion, use Komodo-native secrets
+  compose.yaml         # Image pinned to <tag>@sha256:<digest>; references ${VAR:?err} for everything
+  .env.example         # Documents required vars; never the real values
   <config files>       # Caddyfile fragments, prometheus rules, dashboards, etc.
 ```
 
-Then add a Komodo Stack resource in `homelab/komodo/<host>.toml` pointing at the directory. On solaris stacks add `additional_env_files = ["secrets.env"]` and a `pre_deploy` that `sops -d`s into it. Push → Komodo syncs.
-
-See the in-repo `komodo-ops` skill for the gory details (env-file collision, GHCR pull auth, FerretDB backup, outbound mode).
+Then add a Komodo Stack resource in `homelab/komodo/<host>.toml` pointing at the directory. Any secret the stack consumes goes in that host's Periphery `[secrets]` block and is referenced from compose via `${KEY:?}`. Push → Komodo syncs.
 
 ## Adding an ollama model
 
-Append the model name to `homelab/solaris/ollama/models.txt`. Commit. The launchd `ollama-sync.sh` job on solaris will pull it on its next tick (or run `ollama-sync now` to force).
+1. Add a Modelfile to `homelab/solaris/ollama/modelfiles/<short>.Modelfile`
+   (bake `num_ctx`, sampler params, optional SYSTEM prompt per the author's recipe).
+2. Add the rebuild to `apply.sh`.
+3. Add a matching `local/<short>-0x` entry to `solaris/litellm/config.yaml`
+   with `reasoning_effort: none` unless it's a true reasoning model.
+4. Push, then on solaris run `~/code/homelab/solaris/ollama/modelfiles/apply.sh`
+   to rebuild + tag, and `docker restart litellm` to load the config.
+5. Add to `dotfiles/ollama/.config/opencode/opencode.jsonc` with sampler overrides.
 
-## Adding a BYOK provider key (Anthropic, OpenAI, etc.)
+See `solaris/ollama/modelfiles/README.md` for conventions.
 
-```
-cd ~/code/homelab
-sops solaris/litellm/secrets.env.sops
-# Add: ANTHROPIC_API_KEY=sk-ant-...
-git commit -am "feat(litellm): add anthropic byok key"
-git push
-```
+## Adding a BYOK provider key (Anthropic, OpenAI, Gemini, …)
 
-Komodo Periphery on solaris will pull, decrypt to `secrets.env`, and restart LiteLLM. The model is reachable via the LiteLLM virtual model name (e.g. `cloud/sonnet-4.5`) once configured in `litellm-config.yaml`.
+1. SSH to solaris, edit `/opt/homebrew/etc/komodo/periphery.config.toml` `[secrets]`:
+   ```toml
+   [secrets]
+   GEMINI_API_KEY = "AIza..."
+   ```
+2. `ssh solaris 'launchctl kickstart -k "gui/$(id -u)/sh.komodo.periphery"'`
+3. Add a model entry to `solaris/litellm/config.yaml` referencing `os.environ/GEMINI_API_KEY`.
+4. Push, then `python3 scripts/komodo.py deploy litellm` (this force-recreates — required for env-only changes).
+5. Verify: `curl -sS https://llm.hyperionx.dev/v1/models -H "Authorization: Bearer $MASTER" | jq '.data[].id' | grep cloud/`
 
 ## Escape hatches (use only when Komodo is the problem)
 
-- **hyperion direct:** `ssh hyperion 'cd /share/containers/stacks/<stack> && docker compose ...'`
-- **solaris direct:** `ssh solaris 'cd ~/stacks/<stack> && docker compose ...'`
-- **Direct ollama bypass:** `OLLAMA_HOST=http://solaris.tailnet:11434` (kept in `~/.copilot/secrets/local.env` as an escape hatch from LiteLLM)
+- **hyperion direct:** `ssh hyperion '/share/CACHEDEV3_DATA/.qpkg/container-station/bin/docker compose -f /share/containers/stacks/<stack>/compose.yaml ...'`
+- **solaris direct:** `ssh solaris 'bash -lc "docker compose -f ~/komodo/stacks/litellm/solaris/<stack>/compose.yaml ..."'`
+- **Direct ollama bypass:** `OLLAMA_HOST=http://solaris:11434` (kept in `~/.copilot/secrets/local.env` as an escape hatch from LiteLLM)
 
 If you used an escape hatch, **fold the change back into git within the same day** or it stops being a homelab and starts being a pet.
 
@@ -92,4 +101,3 @@ If you used an escape hatch, **fold the change back into git within the same day
 
 - `dotfiles-helper` — for Mac client config changes (alias, env var, MCP, brew, LaunchAgent)
 - `home-network-helper` — for UniFi / Cloudflare / NextDNS / VLAN changes
-- (in-repo) `komodo-ops` — for Komodo resource format, SOPS recipe, rollback, age key rotation
