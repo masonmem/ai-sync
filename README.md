@@ -31,13 +31,10 @@ mkdir -p ~/.copilot/secrets
 | Path | Tracked? | Purpose |
 |---|---|---|
 | `copilot-instructions.md` | ✅ | Personal global instructions, applied to every session |
-| `instructions/*.instructions.md` | ✅ | Topic-specific personal instructions |
 | `skills/<name>/SKILL.md` | ✅ | Personal skills (loaded on demand by description match) |
-| `agents/*.agent.md` | ✅ | Personal custom agent profiles |
 | `mcp-config.json` | ✅ | User-level MCP server definitions |
-| `lsp-config.json` | ✅ | User-level LSP server definitions |
-| `hooks/` | ✅ | User-level hook scripts |
 | `bin/` | ✅ | Small wrapper scripts (e.g. for MCP servers that need secrets) |
+| `instructions/`, `agents/`, `hooks/` | ✅ | Reserved for future topic-specific instructions, custom agent profiles, and hook scripts. Empty today. |
 | `secrets/` | ❌ (gitignored) | Per-server `.env` files sourced by wrappers in `bin/` |
 | `settings.json` | ✅ | Personal CLI settings (model, footer, allowedUrls) |
 | `config.json`, `logs/`, `session-state/`, `session-store.db*`, `ide/`, `restart/`, `command-history-state*`, `installed-plugins/`, `plugin-data/`, `permissions-config.json` | ❌ | CLI-managed runtime state |
