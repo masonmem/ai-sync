@@ -34,36 +34,56 @@ Copilot CLI and Claude Code consume the same conceptual assets (instructions, sk
 
 ## Bootstrap a new machine
 
-```bash
-# 1. Clone the canonical repo.
-git clone git@github.com:masonmem/ai-config.git ~/.ai-config
+Three scripts in `bin/` handle the per-machine setup; pick the path that matches your starting point.
 
-# 2. Make wrappers executable.
+### Fresh machine (Claude Code only, never had Copilot CLI)
+
+```bash
+git clone git@github.com:masonmem/ai-config.git ~/.ai-config
+chmod +x ~/.ai-config/bin/*.sh
+bash ~/.ai-config/bin/bootstrap-claude.sh   # sets up ~/.claude/ symlinks
+# Populate ~/.ai-config/secrets/ from your Keychain or `secrets-push`
+# from another machine. Restart Claude Code.
+```
+
+### Fresh machine (Copilot CLI + optionally Claude Code)
+
+```bash
+git clone git@github.com:masonmem/ai-config.git ~/.ai-config
 chmod +x ~/.ai-config/bin/*.sh
 
-# 3. Create the per-tool surfaces.
-# Copilot CLI: clone into ~/.copilot (or move an existing CLI runtime dir aside first),
-# then replace the tracked entries with symlinks into ~/.ai-config:
+# Set up ~/.copilot/ as a symlinked surface (matches the layout in this repo)
 mkdir -p ~/.copilot
-ln -sf ~/.ai-config/instructions.md          ~/.copilot/copilot-instructions.md
-ln -sf ~/.ai-config/skills                   ~/.copilot/skills
-ln -sf ~/.ai-config/bin                      ~/.copilot/bin
-ln -sf ~/.ai-config/mcp.json                 ~/.copilot/mcp-config.json
-ln -sf ~/.ai-config/secrets                  ~/.copilot/secrets
-ln -sf ~/.ai-config/copilot/settings.json    ~/.copilot/settings.json
+ln -sfn ~/.ai-config/instructions.md          ~/.copilot/copilot-instructions.md
+ln -sfn ~/.ai-config/skills                   ~/.copilot/skills
+ln -sfn ~/.ai-config/bin                      ~/.copilot/bin
+ln -sfn ~/.ai-config/mcp.json                 ~/.copilot/mcp-config.json
+ln -sfn ~/.ai-config/secrets                  ~/.copilot/secrets
+ln -sfn ~/.ai-config/copilot/settings.json    ~/.copilot/settings.json
 
-# Claude Code: same idea against ~/.claude:
-mkdir -p ~/.claude
-ln -sf ~/.ai-config/instructions.md      ~/.claude/CLAUDE.md
-ln -sf ~/.ai-config/skills               ~/.claude/skills
-ln -sf ~/.ai-config/bin                  ~/.claude/bin
-ln -sf ~/.ai-config/secrets              ~/.claude/secrets
-ln -sf ~/.ai-config/claude/settings.json ~/.claude/settings.json
+# And/or set up Claude Code:
+bash ~/.ai-config/bin/bootstrap-claude.sh
 
-# 4. Create machine-local secrets for any MCP servers you've enabled.
-mkdir -p ~/.ai-config/secrets
-# See mcp.json + the per-server notes in bin/*-wrapper.sh for what to put here.
+# Populate ~/.ai-config/secrets/ (`secrets-push` from another Mac).
 ```
+
+### Existing machine that already had `~/.copilot/` from the old layout
+
+```bash
+# Run on the host that still has ~/.copilot/.git/ as a physical clone.
+# Idempotent — exits cleanly if already migrated.
+bash ~/.copilot/bin/migrate-from-copilot.sh --dry   # preview
+bash ~/.copilot/bin/migrate-from-copilot.sh         # do it
+bash ~/.ai-config/bin/bootstrap-claude.sh           # optional: set up Claude Code
+```
+
+### Ongoing: pull updates from navi
+
+```bash
+ai-config-sync   # ~/.ai-config/bin/ai-config-sync; mirror of dotfiles-sync
+```
+
+This `git pull --ff-only`s the repo and re-applies the per-tool symlinks (safe if already linked). Bails on a dirty working tree. Pair with `dotfiles-sync` from the dotfiles repo.
 
 Each CLI auto-recreates its own runtime state (logs, sessions, caches, plugin data) on first launch.
 

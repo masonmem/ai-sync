@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# ai-config-sync — pull latest ~/.ai-config and re-apply the per-tool symlinks.
+#
+# Sibling to ~/dotfiles/bin/dotfiles-sync: same shape, different repo.
+# Safe to run repeatedly (idempotent). Designed for solaris (always-on)
+# so a push from navi lands without manual SSH; also fine on navi.
+#
+# What it does:
+#   * `git pull --ff-only` in ~/.ai-config
+#   * `chmod +x` any wrapper in bin/*
+#   * Re-link the per-tool entry points in ~/.copilot/ and ~/.claude/
+#     (`ln -sfn` — survives an upstream rename of any canonical file)
+#
+# Bails on a dirty working tree (same posture as dotfiles-sync).
+set -euo pipefail
+
+AI_CONFIG="${AI_CONFIG_DIR:-$HOME/.ai-config}"
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+log() { printf '\033[36m[ai-config-sync]\033[0m %s\n' "$*"; }
+
+if [[ ! -d "$AI_CONFIG/.git" ]]; then
+  log "no git repo at $AI_CONFIG — run migrate-from-copilot.sh or clone"
+  log "  git clone git@github.com:masonmem/ai-config.git $AI_CONFIG"
+  exit 1
+fi
+
+cd "$AI_CONFIG"
+
+if ! git diff --quiet HEAD || ! git diff --quiet --cached; then
+  log "working tree dirty; refusing to sync. Commit or stash first:"
+  git status --short
+  exit 1
+fi
+
+log "fetching origin…"
+git fetch --quiet origin
+
+local_rev=$(git rev-parse HEAD)
+remote_rev=$(git rev-parse '@{u}')
+if [[ "$local_rev" == "$remote_rev" ]]; then
+  log "already up to date ($local_rev)"
+else
+  log "pulling $local_rev → $remote_rev"
+  git pull --ff-only --quiet
+fi
+
+log "chmod +x bin/* …"
+[[ -d bin ]] && find bin -maxdepth 1 -type f -name '*.sh' -exec chmod +x {} +
+
+# Re-link entry points (idempotent thanks to ln -sfn).
+relink() {
+  local target="$1" linkname="$2"
+  if [[ ! -e "$target" ]]; then
+    log "skipping $linkname → $target (target missing)"
+    return
+  fi
+  ln -sfn "$target" "$linkname"
+}
+
+if [[ -d "$HOME/.copilot" ]]; then
+  log "re-linking ~/.copilot/ entries"
+  relink "$AI_CONFIG/instructions.md"        "$HOME/.copilot/copilot-instructions.md"
+  relink "$AI_CONFIG/skills"                 "$HOME/.copilot/skills"
+  relink "$AI_CONFIG/bin"                    "$HOME/.copilot/bin"
+  relink "$AI_CONFIG/mcp.json"               "$HOME/.copilot/mcp-config.json"
+  relink "$AI_CONFIG/secrets"                "$HOME/.copilot/secrets"
+  relink "$AI_CONFIG/copilot/settings.json"  "$HOME/.copilot/settings.json"
+fi
+
+if [[ -d "$HOME/.claude" ]]; then
+  log "re-linking ~/.claude/ entries"
+  relink "$AI_CONFIG/instructions.md"        "$HOME/.claude/CLAUDE.md"
+  relink "$AI_CONFIG/skills"                 "$HOME/.claude/skills"
+  relink "$AI_CONFIG/bin"                    "$HOME/.claude/bin"
+  relink "$AI_CONFIG/secrets"                "$HOME/.claude/secrets"
+  relink "$AI_CONFIG/claude/settings.json"   "$HOME/.claude/settings.json"
+fi
+
+log "done."
