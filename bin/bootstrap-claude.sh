@@ -53,4 +53,25 @@ relink "$AI_CONFIG/bin"                  "$DOT_CLAUDE/bin"
 relink "$AI_CONFIG/secrets"              "$DOT_CLAUDE/secrets"
 relink "$AI_CONFIG/claude/settings.json" "$DOT_CLAUDE/settings.json"
 
+# Register user-scope MCP servers. Claude Code 2.x stores these in
+# ~/.claude.json (per-machine state, untracked), populated only by
+# `claude mcp add` — there's no way to declare them through the tracked
+# settings.json. Each line is idempotent: skips if the server already
+# exists. Add a new line here whenever you add a wrapper in $AI_CONFIG/bin.
+register_mcp() {
+  local name="$1" command="$2"
+  if ! command -v claude >/dev/null 2>&1; then
+    log "claude CLI not installed; skipping MCP registration for $name"
+    return
+  fi
+  if claude mcp get "$name" >/dev/null 2>&1; then
+    log "MCP server $name already registered"
+  else
+    log "registering MCP server $name → $command"
+    claude mcp add --scope user "$name" "$command"
+  fi
+}
+
+register_mcp unifi "$AI_CONFIG/bin/unifi-mcp-wrapper.sh"
+
 log "done. Restart Claude Code to load the new instructions / skills / MCP servers."

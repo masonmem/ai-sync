@@ -27,7 +27,7 @@ There are two repos in play:
 | Shared shell alias / env var | `~/dotfiles/zsh/.config/zsh/{20-aliases,10-env}.zsh` | Edit tracked file |
 | Machine-specific shell config | `~/.config/zsh/90-*.zsh` (untracked, auto-sourced by `.zshrc`) | Create or edit local file |
 | Machine-specific git identity | `~/.gitconfig.local` (untracked, `[include]`-d by `~/.gitconfig`) | Edit local file |
-| New MCP server (user-global) | `~/.ai-config/mcp.json` (Copilot) + `~/.ai-config/claude/settings.json` `mcpServers` (Claude Code) + optional `~/.ai-config/bin/<name>-wrapper.sh` for secrets | See "Adding an MCP server" below |
+| New MCP server (user-global) | `~/.ai-config/mcp.json` (Copilot) + `claude mcp add --scope user` (Claude Code) + optional `~/.ai-config/bin/<name>-wrapper.sh` for secrets. Append the `claude mcp add` line to `~/.ai-config/bin/bootstrap-claude.sh` so fresh machines reproduce. | See "Adding an MCP server" below |
 | New MCP server (project-specific) | `<repo>/.github/mcp.json` (Copilot) or `<repo>/.mcp.json` (Claude Code) | Same wrapper pattern works |
 | New personal skill | `~/.ai-config/skills/<name>/SKILL.md` | Copilot: `/skills reload`. Claude Code: restart session. |
 | New personal agent | `~/.ai-config/agents/<name>.agent.md` | — |
@@ -58,22 +58,27 @@ Commit the Brewfile change as `chore(brewfile): add <pkg>` or `feat(brewfile): a
 
 ## Adding an MCP server (user-global, in `~/.ai-config/`)
 
+Two tools, two registration mechanisms — both end up pointing at the same wrapper script.
+
+**Copilot CLI** reads `~/.ai-config/mcp.json`. Either edit that file directly or use `/mcp add`.
+
+**Claude Code (≥ 2.x)** does **not** honor an `mcpServers` block in `settings.json` at user scope. It only loads user-scope servers from `~/.claude.json`, which is per-machine state populated by `claude mcp add --scope user`. Because `~/.claude.json` is untracked, the reproducible move is to append the registration command to `~/.ai-config/bin/bootstrap-claude.sh` so a fresh machine reruns it.
+
 Decision: does this MCP server need secrets (API keys, tokens)?
 
-- **No secrets** → add the server definition directly to `~/.ai-config/mcp.json` (Copilot) and the `mcpServers` block in `~/.ai-config/claude/settings.json` (Claude Code). Or run the host CLI's interactive `/mcp add` (Copilot) flow.
+- **No secrets** → register the server URL/command directly in both tools. For Claude Code: `claude mcp add --scope user <name> <command-or-url>`.
 - **Yes, secrets** → use the wrapper-script pattern, because both Copilot CLI and Claude Code spawn MCP servers with only `PATH` inherited; all other env vars must be literal in the JSON, which would leak secrets into git.
 
 ### Wrapper-script pattern for secret-bearing MCP servers
 
 1. Create `~/.ai-config/bin/<name>-wrapper.sh` that sources `~/.ai-config/secrets/<name>.env` and execs the server binary. See `unifi-mcp-wrapper.sh` as the reference example.
 2. `chmod +x` the wrapper.
-3. Reference the wrapper as `command` (absolute path: `/Users/<you>/.ai-config/bin/<name>-wrapper.sh` works for both tools) in both:
-   - `~/.ai-config/mcp.json` (Copilot)
-   - `~/.ai-config/claude/settings.json` → `mcpServers.<name>` (Claude Code)
-   …with an empty `env: {}`.
+3. Wire it into each host:
+   - **Copilot**: add an entry in `~/.ai-config/mcp.json` pointing `command` at the wrapper's absolute path, with empty `env: {}`.
+   - **Claude Code**: run `claude mcp add --scope user <name> $HOME/.ai-config/bin/<name>-wrapper.sh`. Then append the same line (idempotently — guard with `claude mcp get <name>`) to `~/.ai-config/bin/bootstrap-claude.sh` so it survives on fresh machines.
 4. Add a header comment to the wrapper documenting exactly which env vars `secrets/<name>.env` must contain.
 5. The user creates `~/.ai-config/secrets/<name>.env` (already gitignored) with `chmod 600`.
-6. Verify: Copilot `/mcp show <name>` after `/mcp reload`; Claude Code by restarting the session and checking the MCP server appears.
+6. Verify: Copilot `/mcp show <name>` after `/mcp reload`; Claude Code `claude mcp list` should show "✓ Connected". Restart any running Claude Code session so it loads the new server.
 
 ## Adding a personal skill
 
