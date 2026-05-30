@@ -69,13 +69,29 @@ bash ~/.ai-config/bin/bootstrap-claude.sh
 
 ### Existing machine that already had `~/.copilot/` from the old layout
 
+The migration script itself lives in this renamed repo, so on a host
+whose `~/.copilot/` still points at the old clone, fetch the script
+directly via HTTPS rather than waiting for a local pull:
+
 ```bash
 # Run on the host that still has ~/.copilot/.git/ as a physical clone.
-# Idempotent — exits cleanly if already migrated.
-bash ~/.copilot/bin/migrate-from-copilot.sh --dry   # preview
-bash ~/.copilot/bin/migrate-from-copilot.sh         # do it
-bash ~/.ai-config/bin/bootstrap-claude.sh           # optional: set up Claude Code
+# The script is idempotent — exits cleanly if already migrated.
+curl -fsSLo /tmp/migrate-from-copilot.sh \
+  https://raw.githubusercontent.com/masonmem/ai-config/main/bin/migrate-from-copilot.sh
+bash /tmp/migrate-from-copilot.sh --dry   # preview every step
+bash /tmp/migrate-from-copilot.sh         # do it
+
+# After the migration: bin/ is now at ~/.ai-config/bin/. Optionally
+# bootstrap Claude Code:
+bash ~/.ai-config/bin/bootstrap-claude.sh
 ```
+
+The script (1) updates the local `origin` URL to `masonmem/ai-config`,
+(2) `git pull --ff-only` so the working tree matches the renamed
+layout, (3) moves `.git` + tracked content from `~/.copilot/` into
+`~/.ai-config/`, and (4) recreates the per-tool symlinks under
+`~/.copilot/`. Leaves Copilot CLI runtime state (`config.json`,
+`session-state/`, `logs/`, etc.) untouched.
 
 ### Ongoing: pull updates from navi
 
