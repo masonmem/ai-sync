@@ -37,4 +37,15 @@ STATE_DIR="${HOME}/.ai-config/state/unifi-mcp"
 mkdir -p "${STATE_DIR}"
 cd "${STATE_DIR}"
 
-exec unifi-mcp-server "$@"
+# MCP hosts (Claude Code, Copilot CLI) spawn this with a minimal PATH that
+# typically excludes ~/.local/bin (where pipx installs). Resolve the binary
+# explicitly to avoid "not found" failures.
+UNIFI_MCP_BIN="${HOME}/.local/bin/unifi-mcp-server"
+if [[ ! -x "${UNIFI_MCP_BIN}" ]]; then
+  UNIFI_MCP_BIN=$(command -v unifi-mcp-server 2>/dev/null) || {
+    echo "unifi-mcp-wrapper: unifi-mcp-server not found in ~/.local/bin or PATH" >&2
+    exit 1
+  }
+fi
+
+exec "${UNIFI_MCP_BIN}" "$@"
