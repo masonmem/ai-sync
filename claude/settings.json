@@ -30,5 +30,9 @@
   },
   "advisorModel": "opus",
   "theme": "dark-ansi",
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.ai-config/bin/statusline.sh"
+  },
   "skipAutoPermissionPrompt": true
 }
