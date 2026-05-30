@@ -1,9 +1,12 @@
 # Personal global instructions (@masonmem)
 
 <!--
-Injected into every Copilot CLI session. Budget is precious here:
+Injected into every session of any AI CLI that points at this file
+(currently Copilot CLI via ~/.copilot/copilot-instructions.md and
+Claude Code via ~/.claude/CLAUDE.md, both symlinks into here). Budget
+is precious:
 * Keep terse — only things that apply universally.
-* Specialised / conditional guidance belongs in `~/.copilot/skills/*`,
+* Specialised / conditional guidance belongs in `~/.ai-config/skills/*`,
   which load on demand.
 * User-facing meta (why this file exists, what to put in it) lives in
   the repo README, not here.
@@ -17,7 +20,7 @@ Injected into every Copilot CLI session. Budget is precious here:
 ## Commits
 
 - Use Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, etc. Scope optional.
-- **Never** add a `Co-authored-by: Copilot` trailer.
+- **Never** add a `Co-authored-by: Copilot` *or* `Co-authored-by: Claude` trailer. Mason treats commits as his own regardless of which assistant produced the diff.
 
 ## Non-interactive (`-p` / `--prompt`) sessions
 
@@ -28,7 +31,7 @@ Injected into every Copilot CLI session. Budget is precious here:
 - `~/notes` is the Obsidian vault (journal, inbox, projects, writing).
   Same vault is exposed to opencode as the `notes` MCP server and to
   Open WebUI as the `notes` tool server, so vault behaviour is symmetric
-  across all three agent surfaces.
+  across all agent surfaces.
 - When the user mentions "my notes", "the inbox", "what did I write
   about X", or anything implying the personal vault, USE the available
   notes/filesystem tools rather than refusing. Don't reply with "I
@@ -42,7 +45,7 @@ Injected into every Copilot CLI session. Budget is precious here:
 ## Where things live
 
 - `~/dotfiles` — machine env (Brewfile, zsh, editors), GNU stow.
-- `~/.copilot` — this AI brain (skills, agents, MCP, instructions).
+- `~/.ai-config` (`masonmem/ai-config`) — shared AI brain (skills, agents, MCP wrappers, per-tool settings, instructions). `~/.copilot/` and `~/.claude/` are thin Copilot-/Claude-Code-shaped surfaces whose tracked entries are symlinks into here.
 - `~/code/homelab` (`masonmem/homelab`) — GitOps source of truth for hyperion (QNAP) + solaris (Mac Mini) docker stacks; orchestrated by Komodo.
 - `~/code/network` (`masonmem/network`) — network design + UniFi/Cloudflare/NextDNS docs only (NOT stacks; those live in `homelab`).
-- For dotfiles/copilot changes, the `dotfiles-helper` skill has the conventions. For homelab/stack/ollama/BYOK changes, the `homelab-helper` skill does. Prefer loading them over guessing.
+- For dotfiles/ai-config changes, the `dotfiles-helper` skill has the conventions. For homelab/stack/ollama/BYOK changes, the `homelab-helper` skill does. Prefer loading them over guessing.

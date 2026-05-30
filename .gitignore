@@ -1,4 +1,11 @@
-# --- Runtime state (managed by Copilot CLI) ---
+# --- Machine-local secrets (sourced by bin/*-wrapper.sh) ---
+secrets/
+
+# --- Wrapper-script runtime side-effects (audit logs, etc.) ---
+state/
+
+# --- Defensive: CLI-managed runtime state, in case ~/.ai-config is ever
+#     accidentally pointed at by a CLI as its runtime dir. ---
 config.json
 permissions-config.json
 command-history-state.json
@@ -13,9 +20,6 @@ restart/
 installed-plugins/
 plugin-data/
 vscode.session.metadata.cache.json
-
-# --- Machine-local secrets (sourced by bin/*-wrapper.sh) ---
-secrets/
 
 # --- Editor noise ---
 .DS_Store

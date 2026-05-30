@@ -1,0 +1,19 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    }
+  },
+  "theme": "dark",
+  "mcpServers": {
+    "unifi": {
+      "command": "/Users/acinm/.ai-config/bin/unifi-mcp-wrapper.sh",
+      "args": [],
+      "env": {}
+    }
+  },
+  "skipAutoPermissionPrompt": true
+}

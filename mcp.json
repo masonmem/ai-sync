@@ -2,7 +2,7 @@
   "mcpServers": {
     "unifi": {
       "type": "local",
-      "command": "/Users/acinm/.copilot/bin/unifi-mcp-wrapper.sh",
+      "command": "/Users/acinm/.ai-config/bin/unifi-mcp-wrapper.sh",
       "args": [],
       "env": {},
       "tools": ["*"]

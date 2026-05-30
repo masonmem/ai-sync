@@ -1,6 +1,6 @@
 ---
 name: dotfiles-helper
-description: Encodes the conventions of @masonmem's dotfiles + ~/.copilot setup. Use when the user asks to install a CLI tool, add an alias, configure a shell env var, add a new MCP server, add a custom skill or agent, or otherwise modify their machine environment so it stays reproducible across machines.
+description: Encodes the conventions of @masonmem's dotfiles + ~/.ai-config setup. Use when the user asks to install a CLI tool, add an alias, configure a shell env var, add a new MCP server, add a custom skill or agent, or otherwise modify their machine environment so it stays reproducible across machines.
 ---
 
 # dotfiles-helper
@@ -10,13 +10,13 @@ This skill captures the *house rules* for how @masonmem's machine environment is
 There are two repos in play:
 
 - **`~/dotfiles`** (`masonmem/dotfiles`) — machine env: Brewfile, shell config, editors, ssh template. Managed with GNU stow, `--no-folding` so machine-local overrides live alongside stowed files.
-- **`~/.copilot`** (`masonmem/copilot`) — AI brain: global instructions, skills, agents, MCP config, hooks. Plain clone (no stow).
+- **`~/.ai-config`** (`masonmem/ai-config`) — shared AI brain consumed by both **Copilot CLI** (via `~/.copilot/` symlinks) and **Claude Code** (via `~/.claude/` symlinks). Holds global instructions, skills, agents, MCP wrapper scripts, per-tool settings, and secrets. Plain clone (no stow).
 
 ## Golden rules
 
 1. **Anything installed must be declared.** A change isn't done until a fresh-machine bootstrap would reproduce it.
-2. **Secrets never enter git.** Use machine-local files (`~/.config/zsh/90-*.zsh`, `~/.copilot/secrets/*.env`, `~/.gitconfig.local`) and reference them from tracked code via wrappers or includes.
-3. **Conventional commits, no Copilot co-author trailer.** Format: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, etc. Never add `Co-authored-by: Copilot`.
+2. **Secrets never enter git.** Use machine-local files (`~/.config/zsh/90-*.zsh`, `~/.ai-config/secrets/*.env`, `~/.gitconfig.local`) and reference them from tracked code via wrappers or includes.
+3. **Conventional commits, no AI co-author trailer.** Format: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, etc. Never add `Co-authored-by: Copilot` or `Co-authored-by: Claude` — Mason treats commits as his own.
 
 ## Decision tree: where does this change go?
 
@@ -27,11 +27,11 @@ There are two repos in play:
 | Shared shell alias / env var | `~/dotfiles/zsh/.config/zsh/{20-aliases,10-env}.zsh` | Edit tracked file |
 | Machine-specific shell config | `~/.config/zsh/90-*.zsh` (untracked, auto-sourced by `.zshrc`) | Create or edit local file |
 | Machine-specific git identity | `~/.gitconfig.local` (untracked, `[include]`-d by `~/.gitconfig`) | Edit local file |
-| New MCP server (user-global) | `~/.copilot/mcp-config.json` + optional `~/.copilot/bin/<name>-wrapper.sh` for secrets | See "Adding an MCP server" below |
-| New MCP server (project-specific) | `<repo>/.github/mcp.json` or `<repo>/.mcp.json` | Same JSON schema |
-| New personal skill | `~/.copilot/skills/<name>/SKILL.md` | Run `/skills reload` after |
-| New personal agent | `~/.copilot/agents/<name>.agent.md` | — |
-| Project-scoped instructions | `<repo>/.github/copilot-instructions.md` or `<repo>/AGENTS.md` | — |
+| New MCP server (user-global) | `~/.ai-config/mcp.json` (Copilot) + `~/.ai-config/claude/settings.json` `mcpServers` (Claude Code) + optional `~/.ai-config/bin/<name>-wrapper.sh` for secrets | See "Adding an MCP server" below |
+| New MCP server (project-specific) | `<repo>/.github/mcp.json` (Copilot) or `<repo>/.mcp.json` (Claude Code) | Same wrapper pattern works |
+| New personal skill | `~/.ai-config/skills/<name>/SKILL.md` | Copilot: `/skills reload`. Claude Code: restart session. |
+| New personal agent | `~/.ai-config/agents/<name>.agent.md` | — |
+| Project-scoped instructions | `<repo>/.github/copilot-instructions.md` (Copilot) or `<repo>/CLAUDE.md` (Claude Code) or `<repo>/AGENTS.md` | — |
 
 ## Installing a Python CLI tool (the right way)
 
@@ -56,32 +56,35 @@ brew bundle --file=~/dotfiles/Brewfile
 
 Commit the Brewfile change as `chore(brewfile): add <pkg>` or `feat(brewfile): add <pkg> for <reason>`.
 
-## Adding an MCP server (user-global, in `~/.copilot/`)
+## Adding an MCP server (user-global, in `~/.ai-config/`)
 
 Decision: does this MCP server need secrets (API keys, tokens)?
 
-- **No secrets** → add the server definition directly to `~/.copilot/mcp-config.json`. Or run `/mcp add` interactively.
-- **Yes, secrets** → use the wrapper-script pattern, because Copilot CLI spawns MCP servers with only `PATH` inherited; all other env vars must be literal in the JSON, which would leak secrets into git.
+- **No secrets** → add the server definition directly to `~/.ai-config/mcp.json` (Copilot) and the `mcpServers` block in `~/.ai-config/claude/settings.json` (Claude Code). Or run the host CLI's interactive `/mcp add` (Copilot) flow.
+- **Yes, secrets** → use the wrapper-script pattern, because both Copilot CLI and Claude Code spawn MCP servers with only `PATH` inherited; all other env vars must be literal in the JSON, which would leak secrets into git.
 
 ### Wrapper-script pattern for secret-bearing MCP servers
 
-1. Create `~/.copilot/bin/<name>-wrapper.sh` that sources `~/.copilot/secrets/<name>.env` and execs the server binary. See `unifi-mcp-wrapper.sh` as the reference example.
+1. Create `~/.ai-config/bin/<name>-wrapper.sh` that sources `~/.ai-config/secrets/<name>.env` and execs the server binary. See `unifi-mcp-wrapper.sh` as the reference example.
 2. `chmod +x` the wrapper.
-3. Reference the wrapper as `command` in `~/.copilot/mcp-config.json` with an empty `env: {}`.
+3. Reference the wrapper as `command` (absolute path: `/Users/<you>/.ai-config/bin/<name>-wrapper.sh` works for both tools) in both:
+   - `~/.ai-config/mcp.json` (Copilot)
+   - `~/.ai-config/claude/settings.json` → `mcpServers.<name>` (Claude Code)
+   …with an empty `env: {}`.
 4. Add a header comment to the wrapper documenting exactly which env vars `secrets/<name>.env` must contain.
-5. The user creates `~/.copilot/secrets/<name>.env` (already gitignored) with `chmod 600`.
-6. Verify with `/mcp show <name>` after `/mcp reload` or a restart.
+5. The user creates `~/.ai-config/secrets/<name>.env` (already gitignored) with `chmod 600`.
+6. Verify: Copilot `/mcp show <name>` after `/mcp reload`; Claude Code by restarting the session and checking the MCP server appears.
 
 ## Adding a personal skill
 
 ```text
-~/.copilot/skills/<lowercase-hyphenated-name>/
+~/.ai-config/skills/<lowercase-hyphenated-name>/
 └── SKILL.md          # YAML frontmatter (name, description, optional allowed-tools) + Markdown body
 ```
 
-The `description` is what Copilot pattern-matches against to decide when to load the skill — write it as "Use when the user asks to …" so it surfaces at the right moments.
+The `description` is what the host CLI pattern-matches against to decide when to load the skill — write it as "Use when the user asks to …" so it surfaces at the right moments. Same SKILL.md format works for both Copilot CLI and Claude Code.
 
-After adding, run `/skills reload` (no need to restart the CLI).
+After adding: Copilot `/skills reload`; Claude Code requires a session restart to pick up new skills.
 
 ## Verifying the change
 
@@ -109,13 +112,13 @@ Two layers, often confused:
    is the `homelab-helper` skill's territory. **Not** what client 401s
    are about.
 2. **Frontend keys** (this Mac → LiteLLM gateway) are per-tool LiteLLM
-   *virtual* keys stored in `~/.copilot/secrets/litellm-<tool>.txt`
+   *virtual* keys stored in `~/.ai-config/secrets/litellm-<tool>.txt`
    (chmod 600, gitignored; mirrored to macOS Keychain via
    `litellm-keys`). Consumption pattern by tool:
 
    | Tool | How it reads the key | Why |
    |---|---|---|
-   | `opencode` | `apiKey: "{file:~/.copilot/secrets/litellm-opencode.txt}"` in `opencode.jsonc` | opencode's `{env:VAR}` returns empty-string when the var is missing in the launching env (silent 401). `{file:}` reads at config-load time with no env dependency. |
+   | `opencode` | `apiKey: "{file:~/.ai-config/secrets/litellm-opencode.txt}"` in `opencode.jsonc` | opencode's `{env:VAR}` returns empty-string when the var is missing in the launching env (silent 401). `{file:}` reads at config-load time with no env dependency. |
    | `aider`    | `~/dotfiles/ollama/.config/zsh/60-aider-wrapper.zsh` injects `OPENAI_API_KEY=$AIDER_LITELLM_KEY` per call | aider's YAML config doesn't expand env vars; needs them on the process. |
    | `goose`    | `~/dotfiles/ollama/.config/zsh/61-goose-wrapper.zsh` injects `OPENAI_API_KEY=$GOOSE_LITELLM_KEY` per call | same as aider — config is static. |
 
@@ -127,7 +130,7 @@ Two layers, often confused:
 
 **Rule:** never store a LiteLLM virtual key directly in a tool's
 config file (it's a dotfile in git). Always either (a) `{file:}` from
-`~/.copilot/secrets/`, or (b) a per-tool wrapper that injects
+`~/.ai-config/secrets/`, or (b) a per-tool wrapper that injects
 `OPENAI_API_KEY` for that one invocation. Don't export
 `OPENAI_API_KEY` globally — opencode auto-detects it and pollutes the
 model picker with the entire built-in OpenAI catalog.
@@ -136,7 +139,7 @@ model picker with the entire built-in OpenAI catalog.
 
 - One concern per commit.
 - Conventional commit prefix; scope optional but encouraged (e.g. `feat(zsh): add pip alias`).
-- **Never** add a `Co-authored-by: Copilot` trailer — this is an explicit user preference.
+- **Never** add a `Co-authored-by: Copilot` *or* `Co-authored-by: Claude` trailer — Mason treats commits as his own, regardless of which assistant produced the diff.
 - For changes that span both repos (e.g. install a tool *and* wire its MCP server), commit each repo separately with clear, parallel commit messages.
 
 ## Related skills
