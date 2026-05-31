@@ -122,13 +122,62 @@ A test must be added whenever:
 - A new MCP registry field is parsed.
 - A new client gets its own `register_mcp_*` or `write_*_mcp_json` function.
 
-## What we deliberately don't do (v1)
+## Per-host overrides (v2, opt-in)
 
-- No per-host overlay / template rendering. Theme-on-host-A vs theme-on-host-B
-  is currently a manual problem; landing this is the first v2 piece.
-- No `ai-sync doctor` with actionable suggested-fix commands.
+Some settings legitimately diverge across hosts (theme, statusLine command,
+which plugins to enable). The pattern is **opt-in**: if no overlay file
+exists for a host, the per-tool settings file stays a symlink (v1 behaviour,
+and the safe default — every Claude Code runtime write flows straight into
+the tracked canonical file). If an overlay file exists at
+`hosts/<short-hostname>/<name>.json`, `ai-sync apply` switches the
+corresponding target to **render mode**:
+
+| Target output | Base (tracked) | Host overlay (tracked) |
+|---|---|---|
+| `~/.claude/settings.json` | `claude/settings.json` | `hosts/<host>/claude-settings.json` |
+| `~/.copilot/settings.json` | `copilot/settings.json` | `hosts/<host>/copilot-settings.json` |
+
+The overlay is deep-merged into the base (dicts recurse, lists replace
+wholesale, overlay wins on conflicts) and the result is written as a real
+file to the output path. The symlink is broken; the rendered file is no
+longer a symlink to the canonical base.
+
+### The writeback trap (read before adding your first overlay)
+
+Claude Code and Copilot write back to their settings.json files at runtime:
+plugin toggles via `/config`, theme changes, accepted permission prompts,
+etc. Under v1 symlinks, those writes flow naturally into the canonical
+tracked file and you just commit them. **Under render mode, those writes
+land in the rendered file and become DRIFT** — `ai-sync status` flags them,
+and the next `ai-sync apply` refuses to overwrite (unless you pass
+`--force`, which discards the runtime write).
+
+The right reflex when status reports DRIFTED on a render-mode target:
+
+1. `diff $AI_CONFIG/claude/settings.json ~/.claude/settings.json` — see what
+   changed.
+2. Decide: is this change meant to be host-specific (→ promote to
+   `hosts/<host>/claude-settings.json`) or shared (→ promote to
+   `claude/settings.json`)?
+3. Hand-edit the appropriate file, commit, then `ai-sync apply`.
+
+If you don't want this trap, **don't add an overlay for that target**. The
+default symlink mode has no trap at all.
+
+### Going back from render mode to symlink mode
+
+Delete the overlay file and run `ai-sync apply`. If the rendered file's
+content is semantically equivalent to the canonical base (which is true
+when the only divergence was the overlay you just removed, *and* no runtime
+writeback has happened), the swap succeeds. Otherwise apply refuses with a
+suggested `diff` invocation — the manual reconciliation is the price of not
+losing your divergent state by accident.
+
+## What we deliberately don't do
+
+- No `ai-sync doctor` with actionable suggested-fix commands. v3.
 - No `ai-sync mcp add <name> <command>` — edit `mcp/servers.toml` directly.
-- No conflict states beyond `MISSING` / `DRIFTED`. "in conflict" only becomes
-  meaningful once render-then-write exists in v2.
+- No `ai-sync diff` / `promote` subcommands for reconciling drifted renders
+  in one command. Manually for now; revisit if it becomes a chore.
 - No distribution as a brew tap or pipx package. `bin/ai-sync` lives here;
   it's our tool.

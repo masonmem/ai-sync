@@ -30,6 +30,7 @@ The full architecture, including the scope-by-path rule and the rationale for no
 | `claude/settings.json`  | ✅ | Claude Code only | Claude Code native settings (theme, plugins, statusLine, etc.) |
 | `docs/architecture.md`  | ✅ | docs | The "where does this go?" rule |
 | `tests/`                | ✅ | tests | pytest suite for `bin/ai-sync` |
+| `hosts/<host>/*.json`   | ✅ (when present) | per-host overlay | Optional deep-merge overlays for settings.json files. Adding one switches the target from symlink to render mode — read `docs/architecture.md#the-writeback-trap` before opting in. |
 | `secrets/`              | ❌ (gitignored) | per-machine | `.env` files sourced by `bin/*-wrapper.sh` |
 | `state/`                | ❌ (gitignored) | per-machine | Wrapper runtime side-effects (e.g. UniFi audit logs) |
 

@@ -70,6 +70,14 @@ class Link:
 
 # Source of truth for the symlink fan-out. Adding a new entry to either tool
 # is a one-line change here.
+#
+# settings.json entries are intentionally in BOTH this table AND OVERLAYABLE
+# below. The rule:
+#   * If hosts/<hostname>/<overlay_name> exists → render (base + overlay merged
+#     into a real file). Claude Code's runtime writes to the rendered file
+#     become DRIFT and need to be promoted manually to base or overlay.
+#   * Otherwise → symlink (v1 behaviour). Claude Code's writes flow straight
+#     into the canonical tracked file and you just commit them.
 CLAUDE_LINKS: list[Link] = [
     Link("instructions.md",       CLAUDE_HOME / "CLAUDE.md"),
     Link("skills",                CLAUDE_HOME / "skills"),
@@ -86,6 +94,40 @@ COPILOT_LINKS: list[Link] = [
     Link("mcp.json",                COPILOT_HOME / "mcp-config.json"),
     Link("copilot/settings.json",   COPILOT_HOME / "settings.json"),
 ]
+
+
+@dataclass(frozen=True)
+class Overlayable:
+    """A file that can switch between symlink mode (no overlay) and render mode
+    (overlay exists). The base file is also in *_LINKS; we override its handling
+    here when an overlay is detected."""
+    base_rel: str          # path relative to AI_CONFIG (the tracked base)
+    output: pathlib.Path   # absolute path of the rendered file (also the symlink target)
+    overlay_name: str      # file name searched under hosts/<host>/
+
+    @property
+    def base(self) -> pathlib.Path:
+        return AI_CONFIG / self.base_rel
+
+    def overlay_path(self, host: str) -> pathlib.Path:
+        return AI_CONFIG / "hosts" / host / self.overlay_name
+
+    def has_overlay(self, host: str) -> bool:
+        return self.overlay_path(host).exists()
+
+
+OVERLAYABLE: list[Overlayable] = [
+    Overlayable("claude/settings.json",  CLAUDE_HOME / "settings.json",  "claude-settings.json"),
+    Overlayable("copilot/settings.json", COPILOT_HOME / "settings.json", "copilot-settings.json"),
+]
+
+
+def overlayable_for(link: Link) -> Overlayable | None:
+    """Return the Overlayable matching a Link by output path, or None."""
+    for o in OVERLAYABLE:
+        if o.output == link.link_path:
+            return o
+    return None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -167,33 +209,155 @@ def relink_one(link: Link) -> tuple[str, str]:
 
 
 def relink_all() -> bool:
-    """Re-link both tools where their home dirs exist. Returns True if all OK."""
+    """Reconcile every Link.
+
+    For ordinary links: ensure symlink points at canonical target (v1 behaviour).
+    For Overlayable links: switch to symlink mode if the host has no overlay,
+    or to render mode if it does. The two modes are mutually exclusive — if
+    the host adds an overlay later, the existing symlink is replaced with a
+    rendered file; if it removes one, the rendered file is replaced with a
+    symlink (with a status warning if the file content diverged from canonical).
+    """
     ok = True
+    host = hostname()
+
+    def handle(link: Link) -> bool:
+        o = overlayable_for(link)
+        if o is not None and o.has_overlay(host):
+            return _apply_render(o, host)
+        # Symlink path (also covers Overlayable links with no overlay present).
+        # If the output is currently a non-symlink file (was rendered before
+        # the overlay was removed), replace it with a symlink — but only if
+        # its content matches canonical, otherwise refuse to avoid losing
+        # Claude Code's runtime writes.
+        if o is not None and link.link_path.is_file() and not link.link_path.is_symlink():
+            if not _safe_to_replace_render_with_symlink(o):
+                err(
+                    f"{link.link_path} was rendered and now differs from canonical "
+                    f"({link.target_rel}). Overlay was removed but rendered file has "
+                    "local changes. Reconcile manually then rerun. "
+                    f"(Diff: diff {link.target_rel} {link.link_path})"
+                )
+                return False
+            link.link_path.unlink()
+        status, detail = relink_one(link)
+        if status == "created":
+            info(f"link  {link.link_path} → {link.target_rel}")
+        elif status == "updated":
+            info(f"relink {link.link_path} → {link.target_rel}")
+        elif status == "target-missing":
+            warn(f"skip {link.link_path}: target missing ({detail})")
+        elif status == "blocked-by-existing":
+            err(f"refuse to clobber {detail} (not a symlink). Move it aside and rerun.")
+            return False
+        return True
+
     if CLAUDE_HOME.is_dir():
         for link in CLAUDE_LINKS:
-            status, detail = relink_one(link)
-            if status == "created":
-                info(f"link  {link.link_path} → {link.target_rel}")
-            elif status == "updated":
-                info(f"relink {link.link_path} → {link.target_rel}")
-            elif status == "target-missing":
-                warn(f"skip {link.link_path}: target missing ({detail})")
-            elif status == "blocked-by-existing":
-                err(f"refuse to clobber {detail} (not a symlink). Move it aside and rerun.")
-                ok = False
+            ok = handle(link) and ok
     if COPILOT_HOME.is_dir():
         for link in COPILOT_LINKS:
-            status, detail = relink_one(link)
-            if status == "created":
-                info(f"link  {link.link_path} → {link.target_rel}")
-            elif status == "updated":
-                info(f"relink {link.link_path} → {link.target_rel}")
-            elif status == "target-missing":
-                warn(f"skip {link.link_path}: target missing ({detail})")
-            elif status == "blocked-by-existing":
-                err(f"refuse to clobber {detail} (not a symlink). Move it aside and rerun.")
-                ok = False
+            ok = handle(link) and ok
     return ok
+
+
+def _safe_to_replace_render_with_symlink(o: Overlayable) -> bool:
+    """True iff o.output is semantically equivalent to o.base (so swapping
+    the file for a symlink to base loses no information).
+
+    Uses JSON equality, not byte equality — the rendered file uses indent=2
+    while a hand-written base might be compact; both represent the same data
+    and we shouldn't refuse the swap over cosmetic formatting.
+    """
+    if not o.base.exists() or not o.output.exists():
+        return True
+    try:
+        return json.loads(o.output.read_text()) == json.loads(o.base.read_text())
+    except json.JSONDecodeError:
+        return False
+
+
+def _apply_render(o: Overlayable, host: str) -> bool:
+    """Render base + overlay → o.output. Refuses to overwrite if the existing
+    rendered file has diverged from what the previous render would have produced
+    (a sign that the tool wrote back to it)."""
+    if not o.base.exists():
+        warn(f"skip {o.output}: base missing ({o.base_rel})")
+        return True
+    try:
+        rendered = render_text(o, host)
+    except ValueError as e:
+        err(str(e))
+        return False
+
+    target = o.output
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if target.is_symlink():
+        info(f"render {target} (was symlink) ← {o.base_rel} + hosts/{host}/{o.overlay_name}")
+        target.unlink()
+        target.write_text(rendered)
+        return True
+
+    if not target.exists():
+        info(f"render {target} ← {o.base_rel} + hosts/{host}/{o.overlay_name}")
+        target.write_text(rendered)
+        return True
+
+    if target.read_text() == rendered:
+        return True  # noop, mtime stable
+
+    # File exists, differs from current render. Either the user edited it by
+    # hand, or the tool wrote back to it. Refuse to clobber unless --force.
+    if _FORCE_APPLY:
+        warn(f"--force: overwriting drifted {target}")
+        target.write_text(rendered)
+        return True
+    err(
+        f"{target} has drifted from `{o.base_rel} + hosts/{host}/{o.overlay_name}`. "
+        f"Likely the tool wrote back to it. Promote the change to base or overlay, "
+        f"or pass --force to discard."
+    )
+    return False
+
+
+# ── render (base + host overlay → rendered file content) ─────────────────────
+
+def deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay into base. Overlay wins on conflict.
+
+    - Dicts merged recursively.
+    - Lists, scalars, and mismatched types: overlay replaces base wholesale.
+    - Does not mutate inputs.
+    """
+    result = dict(base)
+    for key, ov in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(ov, dict):
+            result[key] = deep_merge(result[key], ov)
+        else:
+            result[key] = ov
+    return result
+
+
+def render_text(o: Overlayable, host: str) -> str:
+    """Produce the merged JSON text for `o` on host `host`. Raises ValueError
+    on JSON parse errors so the caller can report cleanly."""
+    try:
+        base_data = json.loads(o.base.read_text())
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{o.base}: invalid JSON ({e})") from e
+
+    overlay_path = o.overlay_path(host)
+    if overlay_path.exists():
+        try:
+            overlay_data = json.loads(overlay_path.read_text())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"{overlay_path}: invalid JSON ({e})") from e
+        merged = deep_merge(base_data, overlay_data)
+    else:
+        merged = base_data
+
+    return json.dumps(merged, indent=2) + "\n"
 
 
 # ── chmod ────────────────────────────────────────────────────────────────────
@@ -325,11 +489,34 @@ def _repo_state() -> tuple[str, bool]:
 
 
 def _link_row(link: Link) -> tuple[str, str]:
-    """Return (mark, descriptor) for a Link row in status output."""
+    """Return (mark, descriptor) for a Link row in status output.
+
+    For an Overlayable Link whose host has an overlay, we check the rendered
+    content instead of the symlink target.
+    """
     target = AI_CONFIG / link.target_rel
     path = link.link_path
+
     if not target.exists():
         return (CROSS, f"{path}  TARGET MISSING ({link.target_rel})")
+
+    host = hostname()
+    o = overlayable_for(link)
+    if o is not None and o.has_overlay(host):
+        # render mode
+        if not path.exists():
+            return (CROSS, f"{path}  NOT RENDERED (run `ai-sync apply`)")
+        if path.is_symlink():
+            return (CROSS, f"{path}  STILL A SYMLINK (overlay exists; run `ai-sync apply` to render)")
+        try:
+            expected = render_text(o, host)
+        except ValueError as e:
+            return (CROSS, f"{path}  RENDER ERROR: {e}")
+        if path.read_text() == expected:
+            return (CHECK, f"{path} ← {link.target_rel} + hosts/{host}/{o.overlay_name}")
+        return (CROSS, f"{path}  DRIFTED (likely Claude Code wrote back; reconcile manually)")
+
+    # symlink mode (Overlayable without overlay, or non-Overlayable link)
     if path.is_symlink():
         try:
             resolved = path.resolve(strict=False)
@@ -339,6 +526,8 @@ def _link_row(link: Link) -> tuple[str, str]:
             return (CHECK, f"{path} → {link.target_rel}")
         return (CROSS, f"{path} → {resolved} (expected {target}) DRIFTED")
     if path.exists():
+        if o is not None:
+            return (CROSS, f"{path}  NOT A SYMLINK (was rendered? run `ai-sync apply` to relink)")
         return (CROSS, f"{path}  NOT A SYMLINK")
     return (CROSS, f"{path}  MISSING")
 
@@ -438,7 +627,7 @@ def git_pull() -> bool:
     return r.returncode == 0
 
 
-def apply_cmd(pull: bool) -> int:
+def apply_cmd(pull: bool, force: bool = False) -> int:
     if pull and not git_pull():
         return 1
     chmod_executables()
@@ -446,12 +635,22 @@ def apply_cmd(pull: bool) -> int:
     # Write the Copilot mcp.json BEFORE re-linking so a fresh machine doesn't
     # briefly see a dangling symlink.
     write_copilot_mcp_json(servers)
-    if not relink_all():
-        return 1
+    global _FORCE_APPLY
+    _FORCE_APPLY = force
+    try:
+        if not relink_all():
+            return 1
+    finally:
+        _FORCE_APPLY = False
     if not register_mcp_claude(servers):
         return 1
     info("apply complete")
     return 0
+
+
+# Module-level flag toggled by apply_cmd. Cleaner than threading it through
+# every helper. Read by _apply_render.
+_FORCE_APPLY = False
 
 
 # ── mcp list ─────────────────────────────────────────────────────────────────
@@ -498,6 +697,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="show link / MCP state, exit 1 if drifted")
     a = sub.add_parser("apply", help="re-link symlinks, re-register MCP servers")
     a.add_argument("--pull", action="store_true", help="git pull --ff-only first")
+    a.add_argument("--force", action="store_true",
+                   help="overwrite rendered files even if they've drifted (loses tool writebacks)")
 
     m = sub.add_parser("mcp", help="MCP registry operations")
     m_sub = m.add_subparsers(dest="mcp_cmd", required=True)
@@ -511,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "status":
         return status_cmd()
     if args.cmd == "apply":
-        return apply_cmd(pull=args.pull)
+        return apply_cmd(pull=args.pull, force=args.force)
     if args.cmd == "mcp":
         if args.mcp_cmd == "list":
             return mcp_list_cmd()
