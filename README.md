@@ -1,5 +1,7 @@
 # ~/.ai-config
 
+[![tests](https://github.com/masonmem/ai-config/actions/workflows/test.yml/badge.svg)](https://github.com/masonmem/ai-config/actions/workflows/test.yml)
+
 Personal AI brain — global instructions, custom skills, agent profiles, MCP wrapper scripts, and per-tool settings. Shared by **Claude Code** (via `~/.claude/`) and **Copilot CLI** (via `~/.copilot/`); designed to be reproducible across machines via [`bin/ai-sync`](bin/ai-sync).
 
 Sibling to [my dotfiles repo](https://github.com/masonmem/dotfiles): dotfiles configures the *machine*, this repo configures the *AI brain* on top of it.
@@ -7,14 +9,21 @@ Sibling to [my dotfiles repo](https://github.com/masonmem/dotfiles): dotfiles co
 ## TL;DR
 
 ```bash
-~/.ai-config/bin/ai-sync status        # what's linked, what's drifted, MCP state
-~/.ai-config/bin/ai-sync apply         # idempotent: re-link, re-register, regenerate mcp.json
-~/.ai-config/bin/ai-sync apply --pull  # git pull --ff-only first
-~/.ai-config/bin/ai-sync mcp list      # registered MCP servers
-~/.ai-config/bin/ai-sync test          # run the pytest suite
+ai-sync status                    # what's linked, what's drifted, MCP state; exit 1 if anything's off
+ai-sync apply                     # idempotent: re-link, re-register, regenerate mcp.json
+ai-sync apply --pull              # git pull --ff-only first
+ai-sync apply --force             # overwrite drifted rendered files (loses tool writebacks)
+ai-sync doctor                    # status + a one-line suggested fix per failure
+ai-sync diff [claude|copilot]     # for render-mode targets: unified diff of file vs expected render
+ai-sync promote --to overlay [claude|copilot]   # move render drift into per-host overlay
+ai-sync promote --to base    [claude|copilot]   # move render drift into shared base (warns on overlay shadow)
+ai-sync mcp list                  # parsed mcp/servers.toml
+ai-sync test                      # pytest tests/
 ```
 
-The full architecture, including the scope-by-path rule and the rationale for not maintaining a canonical-config DSL, lives in [`docs/architecture.md`](docs/architecture.md). Start there before making structural changes.
+All commands are reachable via the symlink at `~/.claude/bin/ai-sync` and `~/.copilot/bin/ai-sync`, or by the absolute path `~/.ai-config/bin/ai-sync`. The CLI requires **Python 3.11+** (for `tomllib`).
+
+The full architecture, including the scope-by-path rule, the per-host overlay writeback trap, and the rationale for not maintaining a canonical-config DSL, lives in [`docs/architecture.md`](docs/architecture.md). Start there before making structural changes.
 
 ## Layout
 
@@ -76,6 +85,30 @@ Solaris runs `ai-config-sync` on a launchd timer; the name stays for that reason
 4. Restart any running Claude Code session.
 
 The CLI handles `claude mcp add` and the Copilot `mcp.json` regeneration. There is no JSON to edit twice.
+
+## Per-host divergence (opt-in)
+
+Some settings legitimately differ across hosts (theme, statusLine command, enabled plugins). The pattern is opt-in: by default `settings.json` files stay symlinks and Claude Code's runtime writebacks flow naturally into the canonical tracked file. To override a setting for one host:
+
+```bash
+# 1. Create the overlay (only the keys you want to override)
+mkdir -p ~/.ai-config/hosts/$(hostname -s)
+echo '{"theme": "dark"}' > ~/.ai-config/hosts/$(hostname -s)/claude-settings.json
+
+# 2. Re-render
+ai-sync apply
+```
+
+This switches that host's `~/.claude/settings.json` from a symlink to a rendered file (base + overlay, deep-merged). **Trade-off**: now Claude Code's runtime writes to `settings.json` (theme toggles, plugin enables, accepted permission prompts, etc.) become DRIFT instead of flowing into canonical. `ai-sync status` flags them and you reconcile manually:
+
+```bash
+ai-sync diff claude                     # inspect what drifted
+ai-sync promote --to overlay claude     # keep this change per-host, OR
+ai-sync promote --to base claude        # share it across all hosts (warns on overlay shadow), OR
+ai-sync apply --force                   # discard the drift
+```
+
+Read [`docs/architecture.md#the-writeback-trap`](docs/architecture.md#the-writeback-trap) before opting in on more than one machine.
 
 ## Selective adoption
 

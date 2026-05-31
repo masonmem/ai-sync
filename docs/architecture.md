@@ -58,8 +58,11 @@ A single Python entry point (`bin/ai-sync`, stdlib-only) with four subcommands.
 
 | Command | What it does | Exit code |
 |---|---|---|
-| `ai-sync status` | Reports symlink state, MCP registration in each client, and secret-file permissions. Read-only. | `0` if clean, `1` if any drift detected. |
-| `ai-sync apply [--pull]` | Idempotent: renders `mcp.json` from `mcp/servers.toml`; refreshes symlinks into `~/.claude/` and `~/.copilot/`; runs `claude mcp add` for any server not yet registered; sets +x on `bin/*.sh`. With `--pull`, runs `git pull --ff-only` first (refuses on dirty tree). | `0` on success. |
+| `ai-sync status` | Reports symlink state, MCP registration in each client, secret-file permissions, and render-mode drift. Read-only. | `0` if clean, `1` if any drift detected. |
+| `ai-sync apply [--pull] [--force]` | Idempotent: renders `mcp.json` from `mcp/servers.toml`; refreshes symlinks (or renders host overlays) into `~/.claude/` and `~/.copilot/`; runs `claude mcp add` for any server not yet registered; sets +x on `bin/*.sh`. With `--pull`, runs `git pull --ff-only` first (refuses on dirty tree). With `--force`, overwrites rendered files that have drifted (loses tool writebacks). | `0` on success. |
+| `ai-sync doctor` | Same checks as `status`, but each failure carries a one-line suggested fix command. | `0` if clean, `1` otherwise. |
+| `ai-sync diff [<target>]` | For render-mode targets (`claude`, `copilot`, or both), print a colorized unified diff between the actual rendered file and what `apply` would produce. Useful for inspecting tool writebacks before deciding where to promote them. | `0` if clean, `1` if any drift. |
+| `ai-sync promote --to <base\|overlay> [<target>]` | Top-level keys that differ between the rendered file and the expected render are merged into the chosen file (the shared base, or the per-host overlay), then `apply --force` re-renders. With `--to base`, warns about keys that the overlay still shadows. | `0` clean, `1` if any warning fired. |
 | `ai-sync mcp list` | Prints parsed `mcp/servers.toml` with placeholders expanded. | `0`. |
 | `ai-sync test` | Runs `pytest tests/`. | pytest exit code. |
 
@@ -173,11 +176,32 @@ writeback has happened), the swap succeeds. Otherwise apply refuses with a
 suggested `diff` invocation — the manual reconciliation is the price of not
 losing your divergent state by accident.
 
+## Promote semantics + the top-level-key limitation
+
+`ai-sync promote` computes a top-level key diff: any key whose value in the
+rendered file differs from (or is absent in) the expected render is treated
+as drift, and the **whole top-level value** is moved to base or overlay.
+
+This is fine when the tool added or replaced a top-level key (`enabledPlugins`,
+`theme`, `skipAutoPermissionPrompt` — most common writebacks). It is coarse
+when a nested field changed, e.g. base has
+`statusLine = {type: "command", command: "base.sh"}` and the tool changed
+only `statusLine.command`. The diff sees `statusLine` as changed and the
+whole object gets moved — so the overlay ends up with the full
+`{type, command}` rather than just the one field. If you need finer-grained
+control, hand-edit the overlay after promote.
+
+`promote --to base` warns when a promoted key is also present in the
+overlay — on the current host the overlay value still wins, so the base
+change has no visible effect locally. Delete the overlay key (or run
+`promote --to overlay` instead) if you want the base value to take effect.
+
 ## What we deliberately don't do
 
-- No `ai-sync doctor` with actionable suggested-fix commands. v3.
 - No `ai-sync mcp add <name> <command>` — edit `mcp/servers.toml` directly.
-- No `ai-sync diff` / `promote` subcommands for reconciling drifted renders
-  in one command. Manually for now; revisit if it becomes a chore.
+- No nested-key promote. Top-level granularity only (see above).
 - No distribution as a brew tap or pipx package. `bin/ai-sync` lives here;
   it's our tool.
+- No automatic promotion of *removed* keys (if the tool deletes a key that
+  was in the base or overlay, `promote` won't translate that into a base/overlay
+  removal). Hand-edit if you need it.
