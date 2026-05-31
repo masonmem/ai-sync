@@ -4,6 +4,12 @@
 Subcommands:
     status               show what's linked / broken / missing; MCP registration state.
     apply [--pull]       idempotent: re-link symlinks, re-register MCP servers, chmod +x.
+    doctor               same checks as status, with a suggested fix per failure.
+    diff [<target>]      for render-mode targets, show the diff between the file and
+                         the expected render. Targets: claude, copilot, or omit for all.
+    promote --to <where> [<target>]
+                         move the current render drift into base (shared) or overlay
+                         (per-host). <where> is `base` or `overlay`. Targets as above.
     mcp list             print the parsed mcp/servers.toml registry.
     test                 run the pytest suite under $AI_CONFIG/tests/.
 
@@ -13,6 +19,7 @@ Environment:
 
 from __future__ import annotations
 
+import difflib
 import sys
 
 if sys.version_info < (3, 11):
@@ -488,121 +495,216 @@ def _repo_state() -> tuple[str, bool]:
     return (branch_line.removeprefix("## "), dirty)
 
 
-def _link_row(link: Link) -> tuple[str, str]:
-    """Return (mark, descriptor) for a Link row in status output.
+@dataclass(frozen=True)
+class CheckResult:
+    """One row of status output. `fix` is the command-or-action `ai-sync doctor`
+    prints; None means either nothing to fix or no automated suggestion."""
+    category: str       # "symlinks" | "mcp" | "secrets"
+    mark: str           # CHECK / CROSS / WARN
+    description: str    # one-line summary printed by status
+    fix: str | None     # suggested remediation, printed by doctor
 
-    For an Overlayable Link whose host has an overlay, we check the rendered
-    content instead of the symlink target.
-    """
+    @property
+    def ok(self) -> bool:
+        return self.mark == CHECK
+
+
+def _link_check(link: Link) -> CheckResult:
+    """Check one Link (or Overlayable in render mode if its overlay exists)."""
     target = AI_CONFIG / link.target_rel
     path = link.link_path
-
     if not target.exists():
-        return (CROSS, f"{path}  TARGET MISSING ({link.target_rel})")
+        return CheckResult(
+            "symlinks", CROSS,
+            f"{path}  TARGET MISSING ({link.target_rel})",
+            f"Restore {target} (was it deleted or renamed in mcp/servers.toml?)",
+        )
 
     host = hostname()
     o = overlayable_for(link)
     if o is not None and o.has_overlay(host):
         # render mode
         if not path.exists():
-            return (CROSS, f"{path}  NOT RENDERED (run `ai-sync apply`)")
+            return CheckResult(
+                "symlinks", CROSS,
+                f"{path}  NOT RENDERED",
+                "ai-sync apply",
+            )
         if path.is_symlink():
-            return (CROSS, f"{path}  STILL A SYMLINK (overlay exists; run `ai-sync apply` to render)")
+            return CheckResult(
+                "symlinks", CROSS,
+                f"{path}  STILL A SYMLINK (overlay exists; should be rendered)",
+                "ai-sync apply",
+            )
         try:
             expected = render_text(o, host)
         except ValueError as e:
-            return (CROSS, f"{path}  RENDER ERROR: {e}")
+            return CheckResult(
+                "symlinks", CROSS,
+                f"{path}  RENDER ERROR: {e}",
+                f"Fix JSON syntax in {o.overlay_path(host)} or {o.base}",
+            )
         if path.read_text() == expected:
-            return (CHECK, f"{path} ← {link.target_rel} + hosts/{host}/{o.overlay_name}")
-        return (CROSS, f"{path}  DRIFTED (likely Claude Code wrote back; reconcile manually)")
+            return CheckResult(
+                "symlinks", CHECK,
+                f"{path} ← {link.target_rel} + hosts/{host}/{o.overlay_name}",
+                None,
+            )
+        target_short = o.overlay_name.split("-")[0]  # "claude-settings.json" → "claude"
+        return CheckResult(
+            "symlinks", CROSS,
+            f"{path}  DRIFTED (likely Claude Code wrote back)",
+            f"ai-sync diff {target_short}  # inspect, then\n"
+            f"  ai-sync promote --to overlay {target_short}  # keep per-host, OR\n"
+            f"  ai-sync promote --to base {target_short}     # share across all hosts, OR\n"
+            f"  ai-sync apply --force                        # discard the drift",
+        )
 
-    # symlink mode (Overlayable without overlay, or non-Overlayable link)
+    # symlink mode
     if path.is_symlink():
         try:
             resolved = path.resolve(strict=False)
         except OSError:
-            return (CROSS, f"{path}  UNREADABLE SYMLINK")
+            return CheckResult("symlinks", CROSS, f"{path}  UNREADABLE SYMLINK",
+                               f"rm {path} && ai-sync apply")
         if resolved == target.resolve():
-            return (CHECK, f"{path} → {link.target_rel}")
-        return (CROSS, f"{path} → {resolved} (expected {target}) DRIFTED")
+            return CheckResult("symlinks", CHECK, f"{path} → {link.target_rel}", None)
+        return CheckResult(
+            "symlinks", CROSS,
+            f"{path} → {resolved} (expected {target}) DRIFTED",
+            f"rm {path} && ai-sync apply",
+        )
     if path.exists():
-        if o is not None:
-            return (CROSS, f"{path}  NOT A SYMLINK (was rendered? run `ai-sync apply` to relink)")
-        return (CROSS, f"{path}  NOT A SYMLINK")
-    return (CROSS, f"{path}  MISSING")
+        return CheckResult(
+            "symlinks", CROSS,
+            f"{path}  NOT A SYMLINK",
+            f"Move it aside: mv {path} {path}.bak && ai-sync apply",
+        )
+    return CheckResult("symlinks", CROSS, f"{path}  MISSING", "ai-sync apply")
 
 
-def status_cmd() -> int:
-    """Print status; return 0 if clean, 1 if anything is drifted."""
-    drifted = False
+def _mcp_checks(name: str, cfg: dict, copilot_state: dict[str, bool]) -> list[CheckResult]:
+    """Return the three (or fewer) check rows for one MCP server entry."""
+    rows: list[CheckResult] = []
+    if not selected_for_host(cfg):
+        rows.append(CheckResult("mcp", CHECK, f"{name}  (skipped on host {hostname()})", None))
+        return rows
 
+    # claude
+    if not claude_installed():
+        rows.append(CheckResult("mcp", CHECK, f"{name} claude:   (claude CLI not installed)", None))
+    elif not selected_for_client(cfg, "claude"):
+        rows.append(CheckResult("mcp", CHECK, f"{name} claude:   (skipped)", None))
+    elif claude_mcp_get(name):
+        rows.append(CheckResult("mcp", CHECK, f"{name} claude:   registered", None))
+    else:
+        rows.append(CheckResult(
+            "mcp", CROSS, f"{name} claude:   NOT REGISTERED",
+            "ai-sync apply",
+        ))
+
+    # copilot
+    if not selected_for_client(cfg, "copilot"):
+        rows.append(CheckResult("mcp", CHECK, f"{name} copilot:  (skipped)", None))
+    elif copilot_state.get(name):
+        rows.append(CheckResult("mcp", CHECK, f"{name} copilot:  present in mcp.json", None))
+    else:
+        rows.append(CheckResult(
+            "mcp", CROSS, f"{name} copilot:  NOT in mcp.json",
+            "ai-sync apply  # regenerates mcp.json from servers.toml",
+        ))
+
+    # secrets file
+    if "secrets_env" in cfg:
+        sp = pathlib.Path(expand(cfg["secrets_env"]))
+        if not sp.exists():
+            rows.append(CheckResult(
+                "secrets", CROSS, f"{name} secrets:  {sp}  MISSING",
+                f"Create {sp} with chmod 600 — see the wrapper script's header for required env vars",
+            ))
+        else:
+            mode = sp.stat().st_mode & 0o777
+            if mode & 0o077:
+                rows.append(CheckResult(
+                    "secrets", WARN, f"{name} secrets:  {sp}  loose perms ({oct(mode)})",
+                    f"chmod 600 {sp}",
+                ))
+            else:
+                rows.append(CheckResult(
+                    "secrets", CHECK, f"{name} secrets:  {sp}  ({oct(mode)})", None,
+                ))
+    return rows
+
+
+def _all_checks() -> list[CheckResult]:
+    """Gather every check. Shared between status and doctor."""
+    rows: list[CheckResult] = []
+    if CLAUDE_HOME.is_dir():
+        rows.extend(_link_check(link) for link in CLAUDE_LINKS)
+    if COPILOT_HOME.is_dir():
+        rows.extend(_link_check(link) for link in COPILOT_LINKS)
+    servers = load_servers()
+    copilot_state = copilot_mcp_state(servers)
+    for name, cfg in servers.items():
+        rows.extend(_mcp_checks(name, cfg, copilot_state))
+    return rows
+
+
+def _print_header() -> None:
     branch, dirty = _repo_state()
     dirty_tag = ", dirty" if dirty else ""
     print(f"{BOLD(str(AI_CONFIG))}  (host: {hostname()}, repo: {branch}{dirty_tag})")
     print()
 
+
+def _drift_exit_code(rows: list[CheckResult]) -> int:
+    return 1 if any(r.mark != CHECK for r in rows) else 0
+
+
+def status_cmd() -> int:
+    """Print status; return 0 if clean, 1 if anything is drifted."""
+    _print_header()
+    rows = _all_checks()
+
     print("symlinks:")
-    for link in CLAUDE_LINKS:
-        if not CLAUDE_HOME.is_dir():
-            continue
-        mark, desc = _link_row(link)
-        print(f"  {mark} {desc}")
-        if mark == CROSS:
-            drifted = True
-    for link in COPILOT_LINKS:
-        if not COPILOT_HOME.is_dir():
-            continue
-        mark, desc = _link_row(link)
-        print(f"  {mark} {desc}")
-        if mark == CROSS:
-            drifted = True
+    sym_rows = [r for r in rows if r.category == "symlinks"]
+    if not sym_rows:
+        print(f"  {DIM('(no tool homes present)')}")
+    for r in sym_rows:
+        print(f"  {r.mark} {r.description}")
     print()
 
-    servers = load_servers()
+    mcp_rows = [r for r in rows if r.category in ("mcp", "secrets")]
     print("mcp servers (canonical: mcp/servers.toml):")
-    if not servers:
+    if not mcp_rows:
         print(f"  {DIM('(none declared)')}")
-    copilot_state = copilot_mcp_state(servers)
-    for name, cfg in servers.items():
-        print(f"  {BOLD(name)}")
-        if not selected_for_host(cfg):
-            print(f"    {DIM(f'(skipped on host {hostname()})')}")
-            continue
+    for r in mcp_rows:
+        print(f"  {r.mark} {r.description}")
 
-        # claude
-        if not claude_installed():
-            print(f"    claude:   {DIM('(claude CLI not installed)')}")
-        elif not selected_for_client(cfg, "claude"):
-            print(f"    claude:   {DIM('(skipped)')}")
-        elif claude_mcp_get(name):
-            print(f"    claude:   {CHECK} registered")
+    return _drift_exit_code(rows)
+
+
+def doctor_cmd() -> int:
+    """Same checks as status, plus a per-failure suggested fix."""
+    _print_header()
+    rows = _all_checks()
+    failures = [r for r in rows if r.mark != CHECK]
+
+    if not failures:
+        print(GREEN("✓ Everything looks good — no fixes needed."))
+        return 0
+
+    print(f"{BOLD('Found ' + str(len(failures)) + ' issue(s).')} Suggested fixes:\n")
+    for r in failures:
+        print(f"  {r.mark} {r.description}")
+        if r.fix:
+            for line in r.fix.splitlines():
+                print(f"    {DIM('→')} {line}")
         else:
-            print(f"    claude:   {CROSS} NOT REGISTERED")
-            drifted = True
+            print(f"    {DIM('→')} (no automated fix; investigate manually)")
+        print()
 
-        # copilot
-        if not selected_for_client(cfg, "copilot"):
-            print(f"    copilot:  {DIM('(skipped)')}")
-        elif copilot_state.get(name):
-            print(f"    copilot:  {CHECK} present in mcp.json")
-        else:
-            print(f"    copilot:  {CROSS} NOT in mcp.json")
-            drifted = True
-
-        # secrets file
-        if "secrets_env" in cfg:
-            sp = pathlib.Path(expand(cfg["secrets_env"]))
-            if not sp.exists():
-                print(f"    secrets:  {CROSS} {sp}  MISSING")
-                drifted = True
-            else:
-                mode = sp.stat().st_mode & 0o777
-                if mode & 0o077:
-                    print(f"    secrets:  {WARN} {sp}  loose perms ({oct(mode)})")
-                    drifted = True
-                else:
-                    print(f"    secrets:  {CHECK} {sp}  ({oct(mode)})")
-    return 1 if drifted else 0
+    return _drift_exit_code(rows)
 
 
 # ── apply ────────────────────────────────────────────────────────────────────
@@ -653,6 +755,215 @@ def apply_cmd(pull: bool, force: bool = False) -> int:
 _FORCE_APPLY = False
 
 
+# ── diff / promote (render-mode reconciliation) ──────────────────────────────
+
+def resolve_target(short_name: str | None) -> list[Overlayable]:
+    """Map a short name ("claude", "copilot") to its Overlayable(s).
+    `None` means "all overlayable targets".
+    """
+    if short_name is None:
+        return list(OVERLAYABLE)
+    matches = [o for o in OVERLAYABLE if o.overlay_name.split("-")[0] == short_name]
+    if not matches:
+        valid = ", ".join(sorted({o.overlay_name.split("-")[0] for o in OVERLAYABLE}))
+        err(f"unknown target {short_name!r}. Valid: {valid}")
+        return []
+    return matches
+
+
+def _drift_state(o: Overlayable, host: str) -> tuple[dict | None, dict | None, str]:
+    """Return (actual_data, expected_data, reason).
+
+    reason describes the situation; one of:
+      'no-overlay'           — render mode not active for this host
+      'no-output'            — output file doesn't exist
+      'not-rendered'         — output is still a symlink
+      'clean'                — actual == expected (no drift)
+      'drifted'              — actual differs from expected
+      'invalid-overlay'      — overlay JSON parse error
+      'invalid-base'         — base JSON parse error
+      'invalid-actual'       — rendered file's JSON parse error
+    """
+    if not o.has_overlay(host):
+        return (None, None, "no-overlay")
+    if not o.output.exists():
+        return (None, None, "no-output")
+    if o.output.is_symlink():
+        return (None, None, "not-rendered")
+    try:
+        expected_text = render_text(o, host)
+    except ValueError as e:
+        if "overlay" in str(e).lower() or str(o.overlay_path(host)) in str(e):
+            return (None, None, "invalid-overlay")
+        return (None, None, "invalid-base")
+    try:
+        actual = json.loads(o.output.read_text())
+    except json.JSONDecodeError:
+        return (None, None, "invalid-actual")
+    expected = json.loads(expected_text)
+    if actual == expected:
+        return (actual, expected, "clean")
+    return (actual, expected, "drifted")
+
+
+def diff_cmd(target_name: str | None) -> int:
+    """Print a unified diff between each render-mode target's file and its
+    expected render. Exit 0 if everything matches, 1 if anything drifted."""
+    targets = resolve_target(target_name)
+    if not targets:
+        return 1
+
+    host = hostname()
+    any_drift = False
+    any_reportable = False
+
+    for o in targets:
+        short = o.overlay_name.split("-")[0]
+        actual, expected, reason = _drift_state(o, host)
+
+        if reason == "no-overlay":
+            info(f"{short}: symlink mode (no overlay for host {host}); nothing to diff")
+            continue
+        any_reportable = True
+        if reason == "no-output":
+            err(f"{short}: {o.output} doesn't exist yet — run `ai-sync apply`")
+            any_drift = True
+            continue
+        if reason == "not-rendered":
+            err(f"{short}: {o.output} is still a symlink — run `ai-sync apply`")
+            any_drift = True
+            continue
+        if reason == "invalid-overlay":
+            err(f"{short}: overlay {o.overlay_path(host)} has invalid JSON")
+            any_drift = True
+            continue
+        if reason == "invalid-base":
+            err(f"{short}: base {o.base} has invalid JSON")
+            any_drift = True
+            continue
+        if reason == "invalid-actual":
+            err(f"{short}: rendered file {o.output} has invalid JSON")
+            any_drift = True
+            continue
+        if reason == "clean":
+            print(f"{CHECK} {short}: clean (matches base + hosts/{host}/{o.overlay_name})")
+            continue
+
+        # drifted
+        any_drift = True
+        print(BOLD(f"{short}: {o.output} ↔ expected (base + hosts/{host}/{o.overlay_name})"))
+        expected_text = json.dumps(expected, indent=2, sort_keys=True) + "\n"
+        actual_text   = json.dumps(actual,   indent=2, sort_keys=True) + "\n"
+        diff = difflib.unified_diff(
+            expected_text.splitlines(keepends=True),
+            actual_text.splitlines(keepends=True),
+            fromfile=f"expected (base + overlay)",
+            tofile=f"actual ({o.output})",
+        )
+        for line in diff:
+            if line.startswith("+") and not line.startswith("+++"):
+                print(GREEN(line.rstrip()))
+            elif line.startswith("-") and not line.startswith("---"):
+                print(RED(line.rstrip()))
+            elif line.startswith("@@"):
+                print(CYAN(line.rstrip()))
+            else:
+                print(line.rstrip())
+        print()
+
+    if not any_reportable:
+        info("no targets in render mode for this host (nothing to diff)")
+        return 0
+    return 1 if any_drift else 0
+
+
+def _drift_changeset(actual: dict, expected: dict) -> dict:
+    """Top-level diff: keys present in actual that differ from (or are absent in)
+    expected. Returns a dict suitable for shallow-merging into base or overlay.
+
+    Limitation: nested-key changes promote the whole top-level key. Documented
+    in docs/architecture.md.
+    """
+    changes: dict = {}
+    for key, val in actual.items():
+        if key not in expected or expected[key] != val:
+            changes[key] = val
+    return changes
+
+
+def _write_json_pretty(path: pathlib.Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def promote_cmd(target_name: str | None, where: str) -> int:
+    """Move render drift into base ('base') or per-host overlay ('overlay')."""
+    if where not in ("base", "overlay"):
+        err(f"--to must be 'base' or 'overlay', got {where!r}")
+        return 1
+
+    targets = resolve_target(target_name)
+    if not targets:
+        return 1
+
+    host = hostname()
+    any_drift = False
+    any_warning = False
+
+    for o in targets:
+        short = o.overlay_name.split("-")[0]
+        actual, expected, reason = _drift_state(o, host)
+
+        if reason == "no-overlay":
+            info(f"{short}: symlink mode for this host; nothing to promote")
+            continue
+        if reason == "clean":
+            info(f"{short}: no drift; nothing to promote")
+            continue
+        if reason != "drifted":
+            err(f"{short}: cannot promote ({reason})")
+            any_warning = True
+            continue
+
+        changes = _drift_changeset(actual, expected)
+        if not changes:
+            info(f"{short}: drifted only on removed keys; promote not yet supported for deletions")
+            continue
+        any_drift = True
+
+        if where == "overlay":
+            overlay_path = o.overlay_path(host)
+            overlay_data = json.loads(overlay_path.read_text())
+            merged = deep_merge(overlay_data, changes)
+            _write_json_pretty(overlay_path, merged)
+            info(f"{short}: promoted {len(changes)} key(s) to {overlay_path}: {sorted(changes.keys())}")
+        else:  # base
+            base_data = json.loads(o.base.read_text())
+            overlay_data = json.loads(o.overlay_path(host).read_text())
+            merged = deep_merge(base_data, changes)
+            _write_json_pretty(o.base, merged)
+            info(f"{short}: promoted {len(changes)} key(s) to {o.base}: {sorted(changes.keys())}")
+            # Warn about keys also present in overlay — they'll still win.
+            shadowed = [k for k in changes if k in overlay_data]
+            if shadowed:
+                warn(
+                    f"{short}: {sorted(shadowed)} also exist in the overlay; "
+                    f"they'll still win on this host. Delete from overlay if you want "
+                    f"the base value to take effect."
+                )
+                any_warning = True
+
+    if any_drift:
+        info("re-applying to clear the drift…")
+        # --force is correct here: we just promoted the drift, so any remaining
+        # difference between rendered file and new expected render is cosmetic
+        # (formatting). The semantic content is already preserved in base/overlay.
+        rc = apply_cmd(pull=False, force=True)
+        if rc != 0:
+            return rc
+    return 1 if any_warning else 0
+
+
 # ── mcp list ─────────────────────────────────────────────────────────────────
 
 def mcp_list_cmd() -> int:
@@ -700,6 +1011,16 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--force", action="store_true",
                    help="overwrite rendered files even if they've drifted (loses tool writebacks)")
 
+    sub.add_parser("doctor", help="status + suggested fix for each failure")
+
+    d = sub.add_parser("diff", help="diff render-mode files against their expected render")
+    d.add_argument("target", nargs="?", help="claude | copilot (omit for all)")
+
+    p = sub.add_parser("promote", help="move render drift into base or overlay")
+    p.add_argument("--to", required=True, choices=("base", "overlay"),
+                   help="promote drift to the shared base file or the per-host overlay")
+    p.add_argument("target", nargs="?", help="claude | copilot (omit for all drifted)")
+
     m = sub.add_parser("mcp", help="MCP registry operations")
     m_sub = m.add_subparsers(dest="mcp_cmd", required=True)
     m_sub.add_parser("list", help="print canonical mcp/servers.toml entries")
@@ -713,6 +1034,12 @@ def main(argv: list[str] | None = None) -> int:
         return status_cmd()
     if args.cmd == "apply":
         return apply_cmd(pull=args.pull, force=args.force)
+    if args.cmd == "doctor":
+        return doctor_cmd()
+    if args.cmd == "diff":
+        return diff_cmd(args.target)
+    if args.cmd == "promote":
+        return promote_cmd(args.target, where=args.to)
     if args.cmd == "mcp":
         if args.mcp_cmd == "list":
             return mcp_list_cmd()
