@@ -314,8 +314,20 @@ def _apply_render(o: Overlayable, host: str) -> bool:
     if target.read_text() == rendered:
         return True  # noop, mtime stable
 
-    # File exists, differs from current render. Either the user edited it by
-    # hand, or the tool wrote back to it. Refuse to clobber unless --force.
+    # Semantic comparison — if only the formatting differs (e.g. user ran
+    # `jq .` on the rendered file), silently re-canonicalize without
+    # treating it as drift. Drift means the *data* changed, not its layout.
+    try:
+        if json.loads(target.read_text()) == json.loads(rendered):
+            target.write_text(rendered)
+            return True
+    except json.JSONDecodeError:
+        # Fall through to the drift error below — invalid JSON is real drift.
+        pass
+
+    # File exists, semantically differs from current render. Either the user
+    # edited it by hand, or the tool wrote back to it. Refuse to clobber
+    # unless --force.
     if _FORCE_APPLY:
         warn(f"--force: overwriting drifted {target}")
         target.write_text(rendered)

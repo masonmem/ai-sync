@@ -103,3 +103,47 @@ def test_promote_to_overlay_no_overlay_says_noop(fake_home, fake_claude, ai_sync
     ai_sync("apply", expect_success=True)
     r = ai_sync("promote", "--to", "overlay", "claude", expect_success=True)
     assert "symlink mode" in r.stdout or "nothing to promote" in r.stdout
+
+
+def test_promote_deletion_only_drift_reports_unsupported(fake_home, fake_claude, ai_sync):
+    """If the tool DELETED a key from the rendered file (instead of adding or
+    changing one), there's no positive changeset to promote. Promote should
+    report this case clearly rather than silently no-op."""
+    base = {"theme": "dark-ansi", "advisorModel": "opus"}
+    overlay = {"theme": "dark"}
+    (fake_home / ".ai-config" / "claude" / "settings.json").write_text(json.dumps(base) + "\n")
+    overlay_dir = fake_home / ".ai-config" / "hosts" / _hostname()
+    overlay_dir.mkdir(parents=True)
+    (overlay_dir / "claude-settings.json").write_text(json.dumps(overlay) + "\n")
+    ai_sync("apply", expect_success=True)
+
+    # Simulate the tool removing a key:
+    settings = fake_home / ".claude" / "settings.json"
+    data = json.loads(settings.read_text())
+    del data["advisorModel"]
+    settings.write_text(json.dumps(data) + "\n")
+
+    r = ai_sync("promote", "--to", "overlay", "claude", expect_success=True)
+    assert "removed keys" in r.stdout or "deletions" in r.stdout
+
+
+def test_apply_silently_recanonicalizes_formatting_only_changes(fake_home, fake_claude, ai_sync):
+    """Hand-formatted rendered file (same JSON content, different whitespace)
+    should be re-canonicalized silently, NOT treated as drift."""
+    base = {"theme": "dark-ansi"}
+    overlay = {"theme": "dark"}
+    (fake_home / ".ai-config" / "claude" / "settings.json").write_text(json.dumps(base) + "\n")
+    overlay_dir = fake_home / ".ai-config" / "hosts" / _hostname()
+    overlay_dir.mkdir(parents=True)
+    (overlay_dir / "claude-settings.json").write_text(json.dumps(overlay) + "\n")
+    ai_sync("apply", expect_success=True)
+
+    # Reformat the file with different whitespace but same data
+    settings = fake_home / ".claude" / "settings.json"
+    data = json.loads(settings.read_text())
+    settings.write_text(json.dumps(data))  # no trailing newline, no indent
+
+    r = ai_sync("apply", expect_success=True)
+    # apply succeeded (didn't refuse with "drifted"); status is clean
+    r2 = ai_sync("status")
+    assert r2.returncode == 0, r2.stdout + r2.stderr
