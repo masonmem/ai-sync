@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# bootstrap-claude.sh — set up ~/.claude/ as a thin symlinked surface
-# over the canonical ~/.ai-config/ AI brain.
+# bootstrap-claude.sh — minimal bootstrap of ~/.claude/ on a fresh machine.
 #
-# Idempotent: safe to run before Claude Code is installed, after it's
-# installed, or repeatedly. Existing physical ~/.claude/settings.json
-# is backed up before being replaced with a symlink.
+# This script is the absolute-minimum fallback for hosts that don't yet have
+# Python + pipx + pytest set up. For everyday use, prefer the full CLI:
 #
-# Usage:
-#   bash ~/.ai-config/bin/bootstrap-claude.sh
+#   ~/.ai-config/bin/ai-sync apply
+#
+# which is reproducibly tested, generates Copilot mcp.json from mcp/servers.toml,
+# registers MCP servers in Claude Code, and exits non-zero on drift.
+#
+# What this script does (subset of ai-sync apply):
+#   * Backs up any pre-existing physical ~/.claude/settings.json once.
+#   * Symlinks the per-tool entry points.
+#   * Delegates to ai-sync if Python 3.11+ is present (gets the rest of apply).
+#
+# Idempotent. Safe to run repeatedly.
 
 set -euo pipefail
 
-AI_CONFIG="$HOME/.ai-config"
+AI_CONFIG="${AI_CONFIG:-$HOME/.ai-config}"
 DOT_CLAUDE="$HOME/.claude"
 
 log() { printf '\033[36m[bootstrap-claude]\033[0m %s\n' "$*"; }
@@ -37,6 +44,18 @@ if [[ -f "$settings" && ! -L "$settings" ]]; then
   fi
 fi
 
+# Prefer the full CLI when available — it covers MCP registration + Copilot
+# mcp.json generation that this minimal script doesn't.
+if command -v python3 >/dev/null 2>&1 \
+   && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null \
+   && [[ -x "$AI_CONFIG/bin/ai-sync" ]]; then
+  log "delegating to ai-sync apply"
+  exec "$AI_CONFIG/bin/ai-sync" apply
+fi
+
+log "Python 3.11+ or ai-sync not available — doing minimal symlinks only."
+log "Install Python ≥ 3.11 (Brewfile has python@3.14) and rerun to get full apply."
+
 relink() {
   local target="$1" linkname="$2"
   if [[ ! -e "$target" ]]; then
@@ -46,32 +65,10 @@ relink() {
   ln -sfn "$target" "$linkname"
 }
 
-log "linking ~/.claude entry points"
 relink "$AI_CONFIG/instructions.md"      "$DOT_CLAUDE/CLAUDE.md"
 relink "$AI_CONFIG/skills"               "$DOT_CLAUDE/skills"
 relink "$AI_CONFIG/bin"                  "$DOT_CLAUDE/bin"
 relink "$AI_CONFIG/secrets"              "$DOT_CLAUDE/secrets"
 relink "$AI_CONFIG/claude/settings.json" "$DOT_CLAUDE/settings.json"
 
-# Register user-scope MCP servers. Claude Code 2.x stores these in
-# ~/.claude.json (per-machine state, untracked), populated only by
-# `claude mcp add` — there's no way to declare them through the tracked
-# settings.json. Each line is idempotent: skips if the server already
-# exists. Add a new line here whenever you add a wrapper in $AI_CONFIG/bin.
-register_mcp() {
-  local name="$1" command="$2"
-  if ! command -v claude >/dev/null 2>&1; then
-    log "claude CLI not installed; skipping MCP registration for $name"
-    return
-  fi
-  if claude mcp get "$name" >/dev/null 2>&1; then
-    log "MCP server $name already registered"
-  else
-    log "registering MCP server $name → $command"
-    claude mcp add --scope user "$name" "$command"
-  fi
-}
-
-register_mcp unifi "$AI_CONFIG/bin/unifi-mcp-wrapper.sh"
-
-log "done. Restart Claude Code to load the new instructions / skills / MCP servers."
+log "symlinks done. MCP servers not registered (need ai-sync). Restart Claude Code."
