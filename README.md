@@ -1,114 +1,88 @@
 # ~/.ai-config
 
-My personal AI-CLI configuration: global instructions, custom skills, agent profiles, MCP wrapper scripts, and per-tool settings. Shared by **GitHub Copilot CLI** (via `~/.copilot/`) and **Claude Code** (via `~/.claude/`) — both treat this directory as the canonical source of the AI brain, and their tracked entries are symlinks into here.
+Personal AI brain — global instructions, custom skills, agent profiles, MCP wrapper scripts, and per-tool settings. Shared by **Claude Code** (via `~/.claude/`) and **Copilot CLI** (via `~/.copilot/`); designed to be reproducible across machines via [`bin/ai-sync`](bin/ai-sync).
 
 Sibling to [my dotfiles repo](https://github.com/masonmem/dotfiles): dotfiles configures the *machine*, this repo configures the *AI brain* on top of it.
 
-## Why a separate repo from dotfiles?
+## TL;DR
 
-- **Different lifecycle.** Shell config changes are surgical. Skills and instructions get iterated constantly.
-- **Different audience.** Someone may want my dotfiles without my MCP wiring, or vice versa.
-- **Runtime hygiene.** `~/.copilot` and `~/.claude` contain lots of CLI-managed state (sessions, logs, caches, plugin data) that must never be committed. Cleaner to own that `.gitignore` here than bury it in a stow package — and cleaner still to keep the tracked content out of those runtime dirs entirely.
+```bash
+~/.ai-config/bin/ai-sync status        # what's linked, what's drifted, MCP state
+~/.ai-config/bin/ai-sync apply         # idempotent: re-link, re-register, regenerate mcp.json
+~/.ai-config/bin/ai-sync apply --pull  # git pull --ff-only first
+~/.ai-config/bin/ai-sync mcp list      # registered MCP servers
+~/.ai-config/bin/ai-sync test          # run the pytest suite
+```
 
-## Why one repo across both CLIs?
-
-Copilot CLI and Claude Code consume the same conceptual assets (instructions, skills, MCP servers, secrets) under different on-disk names. Maintaining two copies would silently drift. Instead:
-
-- Skills, instructions, MCP wrappers, and secrets live **once** under `~/.ai-config/`.
-- Each tool gets a thin shaped surface (`~/.copilot/`, `~/.claude/`) whose tracked entries are symlinks into `~/.ai-config/`.
-- Each tool's tool-specific settings file (`copilot/settings.json`, `claude/settings.json`) lives in its own subdir here so both stay version-controlled without conflicting schemas.
+The full architecture, including the scope-by-path rule and the rationale for not maintaining a canonical-config DSL, lives in [`docs/architecture.md`](docs/architecture.md). Start there before making structural changes.
 
 ## Layout
 
-| Path | Tracked? | Purpose |
-|---|---|---|
-| `instructions.md` | ✅ | Personal global instructions, applied to every session (both tools) |
-| `skills/<name>/SKILL.md` | ✅ | Personal skills (loaded on demand by description match) |
-| `bin/` | ✅ | Wrapper scripts (e.g. for MCP servers that need secrets) |
-| `mcp.json` | ✅ | Copilot CLI user-level MCP definitions (Copilot's schema) |
-| `copilot/settings.json` | ✅ | Copilot CLI personal settings (model, footer, allowedUrls) |
-| `claude/settings.json` | ✅ | Claude Code personal settings (includes `mcpServers` block in Claude's schema) |
-| `agents/`, `hooks/` | ✅ | Reserved for topic-specific agent profiles and hook scripts. Empty today. |
-| `secrets/` | ❌ (gitignored) | Per-server `.env` files sourced by wrappers in `bin/` |
-| `state/` | ❌ (gitignored) | Runtime side-effects (e.g. MCP server audit logs) |
+| Path | Tracked? | Scope | Purpose |
+|---|---|---|---|
+| `instructions.md`       | ✅ | shared (both tools) | Personal global instructions |
+| `skills/<name>/SKILL.md`| ✅ | shared | Personal skills (loaded on demand by description match) |
+| `agents/`, `hooks/`     | ✅ | shared | Reserved for topic-specific agent profiles and hook scripts |
+| `bin/`                  | ✅ | shared | `ai-sync` CLI, MCP/statusline wrapper scripts |
+| `mcp/servers.toml`      | ✅ | translated | **Single source of truth for MCP servers.** Read by `ai-sync apply`. |
+| `mcp.json`              | ✅ | generated | Copilot's mcp.json — regenerated each `ai-sync apply` from `mcp/servers.toml`. Do not hand-edit. |
+| `copilot/settings.json` | ✅ | Copilot only | Copilot CLI native settings |
+| `claude/settings.json`  | ✅ | Claude Code only | Claude Code native settings (theme, plugins, statusLine, etc.) |
+| `docs/architecture.md`  | ✅ | docs | The "where does this go?" rule |
+| `tests/`                | ✅ | tests | pytest suite for `bin/ai-sync` |
+| `secrets/`              | ❌ (gitignored) | per-machine | `.env` files sourced by `bin/*-wrapper.sh` |
+| `state/`                | ❌ (gitignored) | per-machine | Wrapper runtime side-effects (e.g. UniFi audit logs) |
+
+The path tells you the scope. There's no decision tree beyond that — see [`docs/architecture.md`](docs/architecture.md).
 
 ## Bootstrap a new machine
 
-Three scripts in `bin/` handle the per-machine setup; pick the path that matches your starting point.
-
-### Fresh machine (Claude Code only, never had Copilot CLI)
-
 ```bash
 git clone git@github.com:masonmem/ai-config.git ~/.ai-config
-chmod +x ~/.ai-config/bin/*.sh
-bash ~/.ai-config/bin/bootstrap-claude.sh   # sets up ~/.claude/ symlinks
-# Populate ~/.ai-config/secrets/ from your Keychain or `secrets-push`
-# from another machine. Restart Claude Code.
+chmod +x ~/.ai-config/bin/ai-sync ~/.ai-config/bin/*.sh
+~/.ai-config/bin/ai-sync apply
+# Populate ~/.ai-config/secrets/ from another machine.
+# Restart any running Claude Code session so it loads new MCP servers.
 ```
 
-### Fresh machine (Copilot CLI + optionally Claude Code)
+`ai-sync apply` requires Python 3.11+ (for `tomllib`). If you're on a host without Python (rare — Brewfile installs python@3.14), [`bin/bootstrap-claude.sh`](bin/bootstrap-claude.sh) is a minimal symlink-only fallback.
+
+### Existing machine that still has `~/.copilot/` from the old layout
 
 ```bash
-git clone git@github.com:masonmem/ai-config.git ~/.ai-config
-chmod +x ~/.ai-config/bin/*.sh
-
-# Set up ~/.copilot/ as a symlinked surface (matches the layout in this repo)
-mkdir -p ~/.copilot
-ln -sfn ~/.ai-config/instructions.md          ~/.copilot/copilot-instructions.md
-ln -sfn ~/.ai-config/skills                   ~/.copilot/skills
-ln -sfn ~/.ai-config/bin                      ~/.copilot/bin
-ln -sfn ~/.ai-config/mcp.json                 ~/.copilot/mcp-config.json
-ln -sfn ~/.ai-config/secrets                  ~/.copilot/secrets
-ln -sfn ~/.ai-config/copilot/settings.json    ~/.copilot/settings.json
-
-# And/or set up Claude Code:
-bash ~/.ai-config/bin/bootstrap-claude.sh
-
-# Populate ~/.ai-config/secrets/ (`secrets-push` from another Mac).
-```
-
-### Existing machine that already had `~/.copilot/` from the old layout
-
-The migration script itself lives in this renamed repo, so on a host
-whose `~/.copilot/` still points at the old clone, fetch the script
-directly via HTTPS rather than waiting for a local pull:
-
-```bash
-# Run on the host that still has ~/.copilot/.git/ as a physical clone.
-# The script is idempotent — exits cleanly if already migrated.
+# Run on the host whose ~/.copilot/.git/ is still a physical clone.
+# Idempotent — exits cleanly if already migrated.
 curl -fsSLo /tmp/migrate-from-copilot.sh \
   https://raw.githubusercontent.com/masonmem/ai-config/main/bin/migrate-from-copilot.sh
-bash /tmp/migrate-from-copilot.sh --dry   # preview every step
+bash /tmp/migrate-from-copilot.sh --dry   # preview
 bash /tmp/migrate-from-copilot.sh         # do it
-
-# After the migration: bin/ is now at ~/.ai-config/bin/. Optionally
-# bootstrap Claude Code:
-bash ~/.ai-config/bin/bootstrap-claude.sh
+~/.ai-config/bin/ai-sync apply
 ```
 
-The script (1) updates the local `origin` URL to `masonmem/ai-config`,
-(2) `git pull --ff-only` so the working tree matches the renamed
-layout, (3) moves `.git` + tracked content from `~/.copilot/` into
-`~/.ai-config/`, and (4) recreates the per-tool symlinks under
-`~/.copilot/`. Leaves Copilot CLI runtime state (`config.json`,
-`session-state/`, `logs/`, etc.) untouched.
-
-### Ongoing: pull updates from navi
+### Ongoing: pull and re-apply
 
 ```bash
-ai-config-sync   # ~/.ai-config/bin/ai-config-sync; mirror of dotfiles-sync
+~/.ai-config/bin/ai-config-sync   # thin shim for `ai-sync apply --pull`
 ```
 
-This `git pull --ff-only`s the repo and re-applies the per-tool symlinks (safe if already linked). Bails on a dirty working tree. Pair with `dotfiles-sync` from the dotfiles repo.
+Solaris runs `ai-config-sync` on a launchd timer; the name stays for that reason.
 
-Each CLI auto-recreates its own runtime state (logs, sessions, caches, plugin data) on first launch.
+## Adding a new MCP server
+
+1. If it needs secrets, write `bin/<name>-mcp-wrapper.sh` following [`bin/unifi-mcp-wrapper.sh`](bin/unifi-mcp-wrapper.sh)'s pattern.
+2. Add a `[<name>]` table to [`mcp/servers.toml`](mcp/servers.toml).
+3. `~/.ai-config/bin/ai-sync apply`
+4. Restart any running Claude Code session.
+
+The CLI handles `claude mcp add` and the Copilot `mcp.json` regeneration. There is no JSON to edit twice.
 
 ## Selective adoption
 
-Want just one skill? Copy `skills/<name>/` into your own `~/.ai-config/skills/`. Want the MCP wiring for a server? Copy the entry from `mcp.json` (Copilot) or `claude/settings.json` mcpServers block (Claude Code) plus the matching `bin/*-wrapper.sh`, and create the matching `secrets/*.env` locally.
+Want just one skill? Copy `skills/<name>/` into your own `~/.ai-config/skills/`. Want the MCP wiring for one server? Copy the matching `bin/<name>-mcp-wrapper.sh`, the entry from `mcp/servers.toml`, and create `secrets/<name>.env` locally.
 
 ## Conventions
 
 - Skills, agents, and MCP server names: lowercase, hyphen-separated.
 - Secrets never appear in tracked files. Wrappers in `bin/` source `~/.ai-config/secrets/<name>.env`.
 - Commits: [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`). No `Co-authored-by` trailers from any AI tool.
+- New behaviour in `bin/ai-sync` needs a test under `tests/`. Run with `~/.ai-config/bin/ai-sync test`.
