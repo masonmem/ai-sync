@@ -15,6 +15,12 @@
 
 set -euo pipefail
 
+# Solaris's launchd job spawns this with a minimal PATH that excludes
+# /opt/homebrew/bin, which leaves only the system Python 3.9 visible (no
+# `tomllib`). Prepend Homebrew so ai-sync's `#!/usr/bin/env python3` shebang
+# picks up Python 3.14.
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 AI_CONFIG="${AI_CONFIG:-$HOME/.ai-config}"
 AI_SYNC="$AI_CONFIG/bin/ai-sync"
 

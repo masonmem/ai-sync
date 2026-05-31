@@ -13,6 +13,17 @@ Environment:
 
 from __future__ import annotations
 
+import sys
+
+if sys.version_info < (3, 11):
+    sys.stderr.write(
+        f"ai-sync requires Python 3.11+ (got {sys.version.split()[0]} at {sys.executable}).\n"
+        "Hint: on macOS, Homebrew's python@3.14 lives at /opt/homebrew/bin/python3.\n"
+        "Hint: in non-interactive contexts (launchd, ssh), ensure PATH starts with\n"
+        "      /opt/homebrew/bin so the right interpreter resolves first.\n"
+    )
+    sys.exit(2)
+
 import argparse
 import json
 import os
@@ -20,7 +31,6 @@ import pathlib
 import shutil
 import string
 import subprocess
-import sys
 import tomllib
 from dataclasses import dataclass
 from typing import Iterable
