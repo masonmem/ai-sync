@@ -1,0 +1,26 @@
+# Single source of truth for MCP server registrations.
+#
+# Every consumer (Claude Code via `claude mcp add`, Copilot CLI via mcp.json,
+# future tools) reads this file. `ai-sync apply` translates each entry into
+# the target tool's native registration format.
+#
+# Placeholders:
+#   ${AI_CONFIG}   — expands to $HOME/.ai-config at apply-time, not by the shell.
+#   ${HOME}        — expands to the current user's home directory.
+#
+# Per-entry keys:
+#   command       (required) — absolute path or ${AI_CONFIG}-relative path to the
+#                              server binary or wrapper script.
+#   args          (optional) — list of additional argv passed to the command.
+#   description   (optional) — human-friendly one-liner shown by `ai-sync mcp list`.
+#   secrets_env   (optional) — informational; path to the env-file the wrapper
+#                              sources. `ai-sync status` warns if missing/loose perms.
+#   hosts         (optional) — list of short hostnames this server should be
+#                              registered on. Empty/missing = all hosts.
+#   clients       (optional) — list of clients to register with. Default = all
+#                              installed (currently "claude" and "copilot").
+
+[unifi]
+command     = "${AI_CONFIG}/bin/unifi-mcp-wrapper.sh"
+description = "UniFi network management — talks to the UCG Ultra console"
+secrets_env = "${AI_CONFIG}/secrets/unifi.env"

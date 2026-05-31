@@ -1,0 +1,514 @@
+#!/usr/bin/env python3
+"""ai-sync — manage the shared ~/.ai-config brain across multiple LLM clients.
+
+Subcommands:
+    status               show what's linked / broken / missing; MCP registration state.
+    apply [--pull]       idempotent: re-link symlinks, re-register MCP servers, chmod +x.
+    mcp list             print the parsed mcp/servers.toml registry.
+    test                 run the pytest suite under $AI_CONFIG/tests/.
+
+Environment:
+    AI_CONFIG   override the canonical brain location (default: ~/.ai-config).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import shutil
+import string
+import subprocess
+import sys
+import tomllib
+from dataclasses import dataclass
+from typing import Iterable
+
+# ── colors ───────────────────────────────────────────────────────────────────
+_USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def _c(code: str, s: str) -> str:
+    return f"\033[{code}m{s}\033[0m" if _USE_COLOR else s
+
+
+GREEN  = lambda s: _c("32", s)
+RED    = lambda s: _c("31", s)
+YELLOW = lambda s: _c("33", s)
+CYAN   = lambda s: _c("36", s)
+DIM    = lambda s: _c("90", s)
+BOLD   = lambda s: _c("1",  s)
+
+CHECK = GREEN("✓")
+CROSS = RED("✗")
+WARN  = YELLOW("!")
+
+# ── paths ────────────────────────────────────────────────────────────────────
+HOME      = pathlib.Path(os.environ.get("HOME", str(pathlib.Path.home())))
+AI_CONFIG = pathlib.Path(os.environ.get("AI_CONFIG", str(HOME / ".ai-config")))
+
+CLAUDE_HOME  = HOME / ".claude"
+COPILOT_HOME = HOME / ".copilot"
+
+
+@dataclass(frozen=True)
+class Link:
+    target_rel: str        # relative to AI_CONFIG
+    link_path: pathlib.Path
+
+
+# Source of truth for the symlink fan-out. Adding a new entry to either tool
+# is a one-line change here.
+CLAUDE_LINKS: list[Link] = [
+    Link("instructions.md",       CLAUDE_HOME / "CLAUDE.md"),
+    Link("skills",                CLAUDE_HOME / "skills"),
+    Link("bin",                   CLAUDE_HOME / "bin"),
+    Link("secrets",               CLAUDE_HOME / "secrets"),
+    Link("claude/settings.json",  CLAUDE_HOME / "settings.json"),
+]
+
+COPILOT_LINKS: list[Link] = [
+    Link("instructions.md",         COPILOT_HOME / "copilot-instructions.md"),
+    Link("skills",                  COPILOT_HOME / "skills"),
+    Link("bin",                     COPILOT_HOME / "bin"),
+    Link("secrets",                 COPILOT_HOME / "secrets"),
+    Link("mcp.json",                COPILOT_HOME / "mcp-config.json"),
+    Link("copilot/settings.json",   COPILOT_HOME / "settings.json"),
+]
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def expand(value: str) -> str:
+    """Expand ${AI_CONFIG} / ${HOME} placeholders without touching $-vars we don't own."""
+    return string.Template(value).safe_substitute(
+        AI_CONFIG=str(AI_CONFIG),
+        HOME=str(HOME),
+    )
+
+
+def hostname() -> str:
+    return os.uname().nodename.split(".")[0]
+
+
+def load_servers() -> dict[str, dict]:
+    """Load mcp/servers.toml. Returns {} if missing."""
+    path = AI_CONFIG / "mcp" / "servers.toml"
+    if not path.exists():
+        return {}
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def selected_for_host(cfg: dict) -> bool:
+    hosts = cfg.get("hosts")
+    return not hosts or hostname() in hosts
+
+
+def selected_for_client(cfg: dict, client: str) -> bool:
+    clients = cfg.get("clients")
+    return not clients or client in clients
+
+
+def info(msg: str) -> None:
+    print(f"{CYAN('[ai-sync]')} {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"{YELLOW('[ai-sync]')} {msg}", file=sys.stderr)
+
+
+def err(msg: str) -> None:
+    print(f"{RED('[ai-sync]')} {msg}", file=sys.stderr)
+
+
+# ── relink ───────────────────────────────────────────────────────────────────
+
+def relink_one(link: Link) -> tuple[str, str]:
+    """Ensure link.link_path is a symlink to AI_CONFIG/link.target_rel.
+
+    Returns (status, detail) where status is one of: created, updated, ok, target-missing.
+    Never raises on routine drift; only on unrecoverable filesystem errors.
+    """
+    target = AI_CONFIG / link.target_rel
+    if not target.exists():
+        return ("target-missing", str(target))
+
+    path = link.link_path
+    if path.is_symlink():
+        try:
+            current = path.resolve(strict=False)
+        except OSError:
+            current = None
+        if current == target.resolve():
+            return ("ok", "")
+        path.unlink()
+        path.symlink_to(target)
+        return ("updated", "")
+
+    if path.exists():
+        # Physical file/dir blocking the symlink — refuse to clobber blind.
+        return ("blocked-by-existing", str(path))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(target)
+    return ("created", "")
+
+
+def relink_all() -> bool:
+    """Re-link both tools where their home dirs exist. Returns True if all OK."""
+    ok = True
+    if CLAUDE_HOME.is_dir():
+        for link in CLAUDE_LINKS:
+            status, detail = relink_one(link)
+            if status == "created":
+                info(f"link  {link.link_path} → {link.target_rel}")
+            elif status == "updated":
+                info(f"relink {link.link_path} → {link.target_rel}")
+            elif status == "target-missing":
+                warn(f"skip {link.link_path}: target missing ({detail})")
+            elif status == "blocked-by-existing":
+                err(f"refuse to clobber {detail} (not a symlink). Move it aside and rerun.")
+                ok = False
+    if COPILOT_HOME.is_dir():
+        for link in COPILOT_LINKS:
+            status, detail = relink_one(link)
+            if status == "created":
+                info(f"link  {link.link_path} → {link.target_rel}")
+            elif status == "updated":
+                info(f"relink {link.link_path} → {link.target_rel}")
+            elif status == "target-missing":
+                warn(f"skip {link.link_path}: target missing ({detail})")
+            elif status == "blocked-by-existing":
+                err(f"refuse to clobber {detail} (not a symlink). Move it aside and rerun.")
+                ok = False
+    return ok
+
+
+# ── chmod ────────────────────────────────────────────────────────────────────
+
+def chmod_executables() -> None:
+    """Ensure *.sh wrappers under bin/ are executable."""
+    bin_dir = AI_CONFIG / "bin"
+    if not bin_dir.is_dir():
+        return
+    for f in bin_dir.iterdir():
+        if f.is_file() and f.suffix == ".sh":
+            mode = f.stat().st_mode
+            if not (mode & 0o111):
+                f.chmod(mode | 0o111)
+
+
+# ── mcp ──────────────────────────────────────────────────────────────────────
+
+def claude_installed() -> bool:
+    return shutil.which("claude") is not None
+
+
+def claude_mcp_get(name: str) -> bool:
+    """True iff `claude mcp get <name>` returns 0."""
+    r = subprocess.run(
+        ["claude", "mcp", "get", name],
+        capture_output=True,
+    )
+    return r.returncode == 0
+
+
+def claude_mcp_add(name: str, command: str, args: list[str]) -> bool:
+    cmd = ["claude", "mcp", "add", "--scope", "user", name, command, *args]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        err(f"claude mcp add {name} failed: {r.stderr.strip()}")
+        return False
+    return True
+
+
+def register_mcp_claude(servers: dict[str, dict]) -> bool:
+    """For each server selected for this host+claude, ensure it's registered."""
+    if not claude_installed():
+        info("claude CLI not installed; skipping MCP registration")
+        return True
+    ok = True
+    for name, cfg in servers.items():
+        if not selected_for_host(cfg) or not selected_for_client(cfg, "claude"):
+            continue
+        if claude_mcp_get(name):
+            info(f"mcp:claude:{name} already registered")
+            continue
+        command = expand(cfg["command"])
+        args = [expand(a) for a in cfg.get("args", [])]
+        if claude_mcp_add(name, command, args):
+            info(f"mcp:claude:{name} registered → {command}")
+        else:
+            ok = False
+    return ok
+
+
+def copilot_mcp_state(servers: dict[str, dict]) -> dict[str, bool]:
+    """Inspect the existing Copilot mcp.json and report which canonical servers are present."""
+    copilot_mcp = AI_CONFIG / "mcp.json"
+    if not copilot_mcp.exists():
+        return {name: False for name in servers}
+    try:
+        data = json.loads(copilot_mcp.read_text())
+    except json.JSONDecodeError:
+        return {name: False for name in servers}
+    declared = set(data.get("mcpServers", {}).keys())
+    return {name: name in declared for name in servers}
+
+
+def _server_entry_copilot(cfg: dict) -> dict:
+    """Translate one servers.toml entry to its Copilot mcp.json shape."""
+    entry = {
+        "type": "local",
+        "command": expand(cfg["command"]),
+        "args": [expand(a) for a in cfg.get("args", [])],
+        "env": {},
+        "tools": ["*"],
+    }
+    return entry
+
+
+def render_copilot_mcp_json(servers: dict[str, dict]) -> str:
+    """Produce the canonical mcp.json text from servers.toml.
+
+    Filters by host and client. Stable key order so identical inputs → identical
+    output (enables byte-equal idempotency check).
+    """
+    selected = {
+        name: _server_entry_copilot(cfg)
+        for name, cfg in servers.items()
+        if selected_for_host(cfg) and selected_for_client(cfg, "copilot")
+    }
+    payload = {"_generated_by": "ai-sync — edit mcp/servers.toml, not this file",
+               "mcpServers": selected}
+    return json.dumps(payload, indent=2, sort_keys=False) + "\n"
+
+
+def write_copilot_mcp_json(servers: dict[str, dict]) -> None:
+    """Write AI_CONFIG/mcp.json if its content would change. mtime-stable when idempotent."""
+    path = AI_CONFIG / "mcp.json"
+    rendered = render_copilot_mcp_json(servers)
+    if path.exists() and path.read_text() == rendered:
+        return
+    path.write_text(rendered)
+    info(f"wrote {path}")
+
+
+# ── status ───────────────────────────────────────────────────────────────────
+
+def _repo_state() -> tuple[str, bool]:
+    """Return (branch-description, dirty)."""
+    if not (AI_CONFIG / ".git").exists():
+        return ("not a git repo", False)
+    r = subprocess.run(
+        ["git", "-C", str(AI_CONFIG), "status", "--porcelain=v1", "-b"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return ("git error", False)
+    lines = r.stdout.splitlines()
+    branch_line = lines[0] if lines else "??"
+    dirty = any(not l.startswith("##") for l in lines)
+    return (branch_line.removeprefix("## "), dirty)
+
+
+def _link_row(link: Link) -> tuple[str, str]:
+    """Return (mark, descriptor) for a Link row in status output."""
+    target = AI_CONFIG / link.target_rel
+    path = link.link_path
+    if not target.exists():
+        return (CROSS, f"{path}  TARGET MISSING ({link.target_rel})")
+    if path.is_symlink():
+        try:
+            resolved = path.resolve(strict=False)
+        except OSError:
+            return (CROSS, f"{path}  UNREADABLE SYMLINK")
+        if resolved == target.resolve():
+            return (CHECK, f"{path} → {link.target_rel}")
+        return (CROSS, f"{path} → {resolved} (expected {target}) DRIFTED")
+    if path.exists():
+        return (CROSS, f"{path}  NOT A SYMLINK")
+    return (CROSS, f"{path}  MISSING")
+
+
+def status_cmd() -> int:
+    """Print status; return 0 if clean, 1 if anything is drifted."""
+    drifted = False
+
+    branch, dirty = _repo_state()
+    dirty_tag = ", dirty" if dirty else ""
+    print(f"{BOLD(str(AI_CONFIG))}  (host: {hostname()}, repo: {branch}{dirty_tag})")
+    print()
+
+    print("symlinks:")
+    for link in CLAUDE_LINKS:
+        if not CLAUDE_HOME.is_dir():
+            continue
+        mark, desc = _link_row(link)
+        print(f"  {mark} {desc}")
+        if mark == CROSS:
+            drifted = True
+    for link in COPILOT_LINKS:
+        if not COPILOT_HOME.is_dir():
+            continue
+        mark, desc = _link_row(link)
+        print(f"  {mark} {desc}")
+        if mark == CROSS:
+            drifted = True
+    print()
+
+    servers = load_servers()
+    print("mcp servers (canonical: mcp/servers.toml):")
+    if not servers:
+        print(f"  {DIM('(none declared)')}")
+    copilot_state = copilot_mcp_state(servers)
+    for name, cfg in servers.items():
+        print(f"  {BOLD(name)}")
+        if not selected_for_host(cfg):
+            print(f"    {DIM(f'(skipped on host {hostname()})')}")
+            continue
+
+        # claude
+        if not claude_installed():
+            print(f"    claude:   {DIM('(claude CLI not installed)')}")
+        elif not selected_for_client(cfg, "claude"):
+            print(f"    claude:   {DIM('(skipped)')}")
+        elif claude_mcp_get(name):
+            print(f"    claude:   {CHECK} registered")
+        else:
+            print(f"    claude:   {CROSS} NOT REGISTERED")
+            drifted = True
+
+        # copilot
+        if not selected_for_client(cfg, "copilot"):
+            print(f"    copilot:  {DIM('(skipped)')}")
+        elif copilot_state.get(name):
+            print(f"    copilot:  {CHECK} present in mcp.json")
+        else:
+            print(f"    copilot:  {CROSS} NOT in mcp.json")
+            drifted = True
+
+        # secrets file
+        if "secrets_env" in cfg:
+            sp = pathlib.Path(expand(cfg["secrets_env"]))
+            if not sp.exists():
+                print(f"    secrets:  {CROSS} {sp}  MISSING")
+                drifted = True
+            else:
+                mode = sp.stat().st_mode & 0o777
+                if mode & 0o077:
+                    print(f"    secrets:  {WARN} {sp}  loose perms ({oct(mode)})")
+                    drifted = True
+                else:
+                    print(f"    secrets:  {CHECK} {sp}  ({oct(mode)})")
+    return 1 if drifted else 0
+
+
+# ── apply ────────────────────────────────────────────────────────────────────
+
+def git_pull() -> bool:
+    """git pull --ff-only the AI_CONFIG repo. Refuses on dirty tree."""
+    if not (AI_CONFIG / ".git").exists():
+        warn(f"{AI_CONFIG} is not a git repo; skipping pull")
+        return True
+    dirty = subprocess.run(
+        ["git", "-C", str(AI_CONFIG), "diff", "--quiet"]
+    ).returncode != 0 or subprocess.run(
+        ["git", "-C", str(AI_CONFIG), "diff", "--quiet", "--cached"]
+    ).returncode != 0
+    if dirty:
+        err("working tree dirty; refusing to pull. Commit or stash first.")
+        return False
+    info("git pull --ff-only")
+    r = subprocess.run(
+        ["git", "-C", str(AI_CONFIG), "pull", "--ff-only"],
+    )
+    return r.returncode == 0
+
+
+def apply_cmd(pull: bool) -> int:
+    if pull and not git_pull():
+        return 1
+    chmod_executables()
+    servers = load_servers()
+    # Write the Copilot mcp.json BEFORE re-linking so a fresh machine doesn't
+    # briefly see a dangling symlink.
+    write_copilot_mcp_json(servers)
+    if not relink_all():
+        return 1
+    if not register_mcp_claude(servers):
+        return 1
+    info("apply complete")
+    return 0
+
+
+# ── mcp list ─────────────────────────────────────────────────────────────────
+
+def mcp_list_cmd() -> int:
+    servers = load_servers()
+    if not servers:
+        print(DIM("(no MCP servers declared in mcp/servers.toml)"))
+        return 0
+    for name, cfg in servers.items():
+        print(BOLD(name))
+        if "description" in cfg:
+            print(f"  {cfg['description']}")
+        for k in ("command", "args", "secrets_env", "hosts", "clients"):
+            if k in cfg:
+                val = cfg[k]
+                if k in ("command", "secrets_env") and isinstance(val, str):
+                    val = expand(val)
+                print(f"  {k} = {val}")
+        print()
+    return 0
+
+
+# ── test ─────────────────────────────────────────────────────────────────────
+
+def test_cmd(pytest_args: list[str]) -> int:
+    tests_dir = AI_CONFIG / "tests"
+    if not tests_dir.is_dir():
+        err(f"no tests/ directory at {tests_dir}")
+        return 1
+    pytest_bin = shutil.which("pytest")
+    if pytest_bin is None:
+        err("pytest not found on PATH. Install with: pipx install pytest")
+        return 1
+    return subprocess.run([pytest_bin, str(tests_dir), *pytest_args]).returncode
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="ai-sync", description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="show link / MCP state, exit 1 if drifted")
+    a = sub.add_parser("apply", help="re-link symlinks, re-register MCP servers")
+    a.add_argument("--pull", action="store_true", help="git pull --ff-only first")
+
+    m = sub.add_parser("mcp", help="MCP registry operations")
+    m_sub = m.add_subparsers(dest="mcp_cmd", required=True)
+    m_sub.add_parser("list", help="print canonical mcp/servers.toml entries")
+
+    t = sub.add_parser("test", help="run the pytest suite")
+    t.add_argument("pytest_args", nargs=argparse.REMAINDER)
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "status":
+        return status_cmd()
+    if args.cmd == "apply":
+        return apply_cmd(pull=args.pull)
+    if args.cmd == "mcp":
+        if args.mcp_cmd == "list":
+            return mcp_list_cmd()
+    if args.cmd == "test":
+        return test_cmd(args.pytest_args)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
