@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Optional auto-sync timer for ~/.ai-config. NOT installed by default;
+  see README "Ongoing: pull and re-apply" for the install one-liner.
+
+  Runs bin/ai-config-sync (a shim for "ai-sync apply" with the pull flag)
+  every 5 minutes. Mirrors the homelab notes-sync LaunchAgent pattern.
+  Note: the pull refuses on a dirty tree, so the timer no-ops loudly
+  (see the .err.log) until local changes are committed or reconciled.
+-->
+<dict>
+  <key>Label</key>
+  <string>sh.user.ai-config-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>"$HOME/.ai-config/bin/ai-config-sync"</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/opt/homebrew/var/log/ai-config-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>/opt/homebrew/var/log/ai-config-sync.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
