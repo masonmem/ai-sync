@@ -7,7 +7,7 @@ import os
 
 
 def _hostname():
-    return os.uname().nodename.split(".")[0]
+    return os.uname().nodename.split(".")[0].lower()
 
 
 def _setup_drift(fake_home, ai_sync, base=None, overlay=None, drift=None):

@@ -148,7 +148,9 @@ def expand(value: str) -> str:
 
 
 def hostname() -> str:
-    return os.uname().nodename.split(".")[0]
+    # Lowercased: macOS reports "Navi.local" but hosts/ dirs and
+    # servers.toml hosts lists use lowercase short names.
+    return os.uname().nodename.split(".")[0].lower()
 
 
 def load_servers() -> dict[str, dict]:

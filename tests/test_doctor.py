@@ -7,7 +7,7 @@ import os
 
 
 def _hostname():
-    return os.uname().nodename.split(".")[0]
+    return os.uname().nodename.split(".")[0].lower()
 
 
 def test_doctor_clean_state_says_nothing_to_fix(fake_home, fake_claude, ai_sync):

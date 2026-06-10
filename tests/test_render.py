@@ -15,7 +15,7 @@ import os
 
 
 def _hostname():
-    return os.uname().nodename.split(".")[0]
+    return os.uname().nodename.split(".")[0].lower()
 
 
 def _seed_base(fake_home, theme="dark-ansi", **extra):
