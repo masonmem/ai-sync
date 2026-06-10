@@ -1,5 +1,8 @@
 # --- Machine-local secrets (sourced by bin/*-wrapper.sh) ---
-secrets/
+# `secrets/*` (not `secrets/`) so the tracked manifest below can be re-included
+# — git can't re-include a file whose parent directory is excluded.
+secrets/*
+!secrets/manifest.toml
 
 # --- Wrapper-script runtime side-effects (audit logs, etc.) ---
 state/

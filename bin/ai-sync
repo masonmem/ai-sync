@@ -162,6 +162,25 @@ def load_servers() -> dict[str, dict]:
         return tomllib.load(f)
 
 
+def load_secrets_manifest() -> list[dict]:
+    """Load secrets/manifest.toml's [[secret]] entries. Returns [] if missing.
+
+    The manifest is the tracked inventory of the gitignored secrets/ files
+    (mirrors homelab's secrets-inventory.toml). Schema per entry:
+        file      basename under secrets/
+        hosts     short hostnames that need it (missing/empty = all hosts)
+        consumer  what reads it (informational)
+        source    one-line recipe for obtaining it — doctor's fix hint
+        perms     expected mode, normally "600"
+    """
+    path = AI_CONFIG / "secrets" / "manifest.toml"
+    if not path.exists():
+        return []
+    with path.open("rb") as f:
+        data = tomllib.load(f)
+    return data.get("secret", [])
+
+
 def selected_for_host(cfg: dict) -> bool:
     hosts = cfg.get("hosts")
     return not hosts or hostname() in hosts
@@ -650,6 +669,64 @@ def _mcp_checks(name: str, cfg: dict, copilot_state: dict[str, bool]) -> list[Ch
     return rows
 
 
+def _secrets_manifest_checks() -> list[CheckResult]:
+    """Check secrets/ against the tracked secrets/manifest.toml.
+
+    For every manifest entry scoped to this host: present / MISSING (the
+    entry's `source` recipe is the fix hint) / loose perms. Files in secrets/
+    that no entry claims get a warning (catches *.bak cruft). No manifest →
+    feature off, no rows.
+    """
+    entries = load_secrets_manifest()
+    if not entries:
+        return []
+    rows: list[CheckResult] = []
+    host = hostname()
+    secrets_dir = AI_CONFIG / "secrets"
+    listed: set[str] = set()
+
+    for e in entries:
+        fname = e.get("file")
+        if not fname:
+            continue
+        listed.add(fname)
+        hosts = e.get("hosts")
+        if hosts and host not in hosts:
+            continue  # not needed on this host
+        sp = secrets_dir / fname
+        if not sp.exists():
+            rows.append(CheckResult(
+                "secrets-manifest", CROSS,
+                f"secrets/{fname}  MISSING (needed on {host})",
+                e.get("source") or "(no source recipe in manifest)",
+            ))
+            continue
+        mode = sp.stat().st_mode & 0o777
+        if mode & 0o077:
+            rows.append(CheckResult(
+                "secrets-manifest", WARN,
+                f"secrets/{fname}  loose perms ({oct(mode)})",
+                f"chmod 600 {sp}",
+            ))
+        else:
+            rows.append(CheckResult(
+                "secrets-manifest", CHECK,
+                f"secrets/{fname}  ({oct(mode)})", None,
+            ))
+
+    if secrets_dir.is_dir():
+        for f in sorted(secrets_dir.iterdir()):
+            if not f.is_file() or f.name.startswith(".") or f.name == "manifest.toml":
+                continue
+            if f.name not in listed:
+                rows.append(CheckResult(
+                    "secrets-manifest", WARN,
+                    f"secrets/{f.name}  not in secrets/manifest.toml",
+                    "Add a [[secret]] entry to secrets/manifest.toml, or delete the file",
+                ))
+    return rows
+
+
 def _all_checks() -> list[CheckResult]:
     """Gather every check. Shared between status and doctor."""
     rows: list[CheckResult] = []
@@ -661,6 +738,7 @@ def _all_checks() -> list[CheckResult]:
     copilot_state = copilot_mcp_state(servers)
     for name, cfg in servers.items():
         rows.extend(_mcp_checks(name, cfg, copilot_state))
+    rows.extend(_secrets_manifest_checks())
     return rows
 
 
@@ -694,6 +772,13 @@ def status_cmd() -> int:
         print(f"  {DIM('(none declared)')}")
     for r in mcp_rows:
         print(f"  {r.mark} {r.description}")
+
+    manifest_rows = [r for r in rows if r.category == "secrets-manifest"]
+    if manifest_rows:
+        print()
+        print("secrets (canonical: secrets/manifest.toml):")
+        for r in manifest_rows:
+            print(f"  {r.mark} {r.description}")
 
     return _drift_exit_code(rows)
 
