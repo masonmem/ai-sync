@@ -51,3 +51,11 @@ jobs:
 
       - name: ai-sync status is clean after apply
         run: AI_CONFIG=$PWD ./bin/ai-sync status
+
+      - name: tree stays clean after apply (mcp.json is generated + gitignored)
+        run: |
+          git diff --exit-code
+          status=$(git status --porcelain)
+          if [ -n "$status" ]; then
+            echo "apply dirtied the tree:"; echo "$status"; exit 1
+          fi
