@@ -1,0 +1,9 @@
+{
+  "model": "fable",
+  "advisorModel": "fable",
+  "effortLevel": "high",
+  "enabledPlugins": {
+    "sonarqube@claude-plugins-official": false,
+    "rust-analyzer-lsp@claude-plugins-official": true
+  }
+}
