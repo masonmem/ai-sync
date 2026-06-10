@@ -30,7 +30,8 @@ There are two repos in play:
 | New MCP server (user-global) | `~/.ai-config/mcp/servers.toml` (single source of truth) + optional `~/.ai-config/bin/<name>-wrapper.sh` for secrets, then `ai-sync apply` | See "Adding an MCP server" below |
 | New MCP server (project-specific) | `<repo>/.github/mcp.json` (Copilot) or `<repo>/.mcp.json` (Claude Code) | Same wrapper pattern works |
 | New personal skill | `~/.ai-config/skills/<name>/SKILL.md` | Copilot: `/skills reload`. Claude Code: restart session. |
-| New personal agent | `~/.ai-config/agents/<name>.agent.md` | — |
+| New personal agent | `~/.ai-config/agents/<name>.agent.md` — **reserved, not yet wired** (no `agents/` dir exists and `ai-sync` has no fan-out link for it; propose wiring it before relying on it) | — |
+| Machine-specific AI-tool setting (model, effortLevel, plugins) | `~/.ai-config/hosts/<lowercase-short-hostname>/claude-settings.json` overlay (deep-merged over `claude/settings.json`), then `ai-sync apply` | Reconcile later runtime writebacks with `ai-sync diff claude` + `ai-sync promote --to overlay\|base claude` — see ai-config README § "Per-host divergence". Never hand-edit the shared `claude/settings.json` for one machine's prefs. |
 | Project-scoped instructions | `<repo>/.github/copilot-instructions.md` (Copilot) or `<repo>/CLAUDE.md` (Claude Code) or `<repo>/AGENTS.md` | — |
 
 ## Installing a Python CLI tool (the right way)
@@ -45,7 +46,7 @@ Reasons:
 - `pipx` is in the Brewfile and isolates each tool in its own venv at `~/.local/pipx/venvs/<pkg>/`.
 - Binaries land in `~/.local/bin/`, which is already on PATH via `~/.zprofile`.
 
-If the tool is general enough that any of @masonmem's machines should have it, also add a `# pipx: <pkg>` comment block to the Brewfile or a small note in the dotfiles README's bootstrap section so a fresh machine reproduces it. (We don't yet have a tracked list of pipx tools — propose creating one if installing the 2nd+ pipx tool.)
+If the tool is general enough that any of @masonmem's machines should have it, also add it to `~/dotfiles/pipx-tools.txt` (the tracked list of pipx tools, installed by the dotfiles bootstrap via `grep -v '^#' pipx-tools.txt | xargs -n1 pipx install`) with a rationale comment, in the same commit.
 
 ## Installing a Homebrew package
 
