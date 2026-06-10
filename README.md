@@ -34,7 +34,7 @@ The full architecture, including the scope-by-path rule, the per-host overlay wr
 | `agents/`, `hooks/`     | ✅ | shared | Reserved for topic-specific agent profiles and hook scripts |
 | `bin/`                  | ✅ | shared | `ai-sync` CLI, MCP/statusline wrapper scripts |
 | `mcp/servers.toml`      | ✅ | translated | **Single source of truth for MCP servers.** Read by `ai-sync apply`. |
-| `mcp.json`              | ✅ | generated | Copilot's mcp.json — regenerated each `ai-sync apply` from `mcp/servers.toml`. Do not hand-edit. |
+| `mcp.json`              | ❌ (gitignored) | generated | Copilot's mcp.json — regenerated each `ai-sync apply` from `mcp/servers.toml`; embeds machine-absolute paths, so it can't be tracked. Do not hand-edit. |
 | `copilot/settings.json` | ✅ | Copilot only | Copilot CLI native settings |
 | `claude/settings.json`  | ✅ | Claude Code only | Claude Code native settings (theme, plugins, statusLine, etc.) |
 | `docs/architecture.md`  | ✅ | docs | The "where does this go?" rule |
