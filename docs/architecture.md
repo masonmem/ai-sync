@@ -43,18 +43,22 @@ honest.
 ## Three layers of variability
 
 1. **Per-tool** (Claude vs Copilot) → directory: `claude/`, `copilot/`.
-2. **Per-host** (Mac laptop vs Mac Mini vs QNAP) → *not yet implemented*. Tracked
-   as v2 in [`README.md`](../README.md). When it lands, the shape will be
-   `hosts/<hostname>.json` merged at `ai-sync apply` time into a rendered
-   `~/.claude/settings.json` (Claude Code's `settings.local.json` only works at
-   project scope — verified in v1 by grep'ing the binary, not at user scope).
+2. **Per-host** (Mac laptop vs Mac Mini vs QNAP) → **implemented, opt-in**:
+   `hosts/<host>/<tool>-settings.json` overlays (host = lowercase short
+   hostname, e.g. `hosts/navi/claude-settings.json`), deep-merged at
+   `ai-sync apply` time into a rendered `~/.claude/settings.json`. See
+   "Per-host overrides" below. Aside: Claude Code's `settings.local.json`
+   DOES work at user scope nowadays (`~/.claude/settings.local.json` is live
+   on navi, holding permissions + plugin toggles) — an untracked alternative
+   for machine prefs, but invisible to this repo, so overlays remain the
+   reproducible path.
 3. **Per-project** → handled by each client's own project-scope mechanism
    (`.claude/settings.json`, `.github/copilot-instructions.md`). Not this repo's
    problem.
 
 ## The `ai-sync` CLI
 
-A single Python entry point (`bin/ai-sync`, stdlib-only) with four subcommands.
+A single Python entry point (`bin/ai-sync`, stdlib-only) with seven subcommands.
 
 | Command | What it does | Exit code |
 |---|---|---|
@@ -67,8 +71,9 @@ A single Python entry point (`bin/ai-sync`, stdlib-only) with four subcommands.
 | `ai-sync test` | Runs `pytest tests/`. | pytest exit code. |
 
 The two legacy bash scripts (`bin/bootstrap-claude.sh`, `bin/ai-config-sync`)
-remain as **shims** so external callers (notably solaris's launchd job and
-muscle-memory invocations) don't break. They delegate to `ai-sync apply`.
+remain as **shims** so external callers (the optional launchd timer in
+`launchd/`, remote `ssh host '…/ai-config-sync'` invocations, and
+muscle-memory) don't break. They delegate to `ai-sync apply`.
 
 ## MCP registry: `mcp/servers.toml`
 

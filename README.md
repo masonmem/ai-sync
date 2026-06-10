@@ -39,7 +39,7 @@ The full architecture, including the scope-by-path rule, the per-host overlay wr
 | `claude/settings.json`  | ✅ | Claude Code only | Claude Code native settings (theme, plugins, statusLine, etc.) |
 | `docs/architecture.md`  | ✅ | docs | The "where does this go?" rule |
 | `tests/`                | ✅ | tests | pytest suite for `bin/ai-sync` |
-| `hosts/<host>/*.json`   | ✅ (when present) | per-host overlay | Optional deep-merge overlays for settings.json files. Adding one switches the target from symlink to render mode — read `docs/architecture.md#the-writeback-trap` before opting in. |
+| `hosts/<host>/*.json`   | ✅ (when present) | per-host overlay | Optional deep-merge overlays for settings.json files. Adding one switches the target from symlink to render mode — read `docs/architecture.md` § "The writeback trap" before opting in. |
 | `secrets/`              | ❌ (gitignored) | per-machine | `.env` files sourced by `bin/*-wrapper.sh` |
 | `state/`                | ❌ (gitignored) | per-machine | Wrapper runtime side-effects (e.g. UniFi audit logs) |
 
@@ -47,15 +47,25 @@ The path tells you the scope. There's no decision tree beyond that — see [`doc
 
 ## Bootstrap a new machine
 
+Order matters: **dotfiles first** — `brew bundle` there provides Python 3.11+ (python@3.14) and jq, which `ai-sync` needs. Then:
+
 ```bash
+# 1. ~/dotfiles bootstrapped (brew bundle done — gives python 3.11+)
+# 2. Clone this repo
 git clone git@github.com:masonmem/ai-config.git ~/.ai-config
 chmod +x ~/.ai-config/bin/ai-sync ~/.ai-config/bin/*.sh
+# 3. Apply (symlinks, MCP registration, mcp.json generation)
 ~/.ai-config/bin/ai-sync apply
-# Populate ~/.ai-config/secrets/ from another machine.
+# 4. Populate secrets, guided by the manifest:
+~/.ai-config/bin/ai-sync doctor   # lists every secret THIS host needs + how to obtain each
 # Restart any running Claude Code session so it loads new MCP servers.
 ```
 
 `ai-sync apply` requires Python 3.11+ (for `tomllib`). If you're on a host without Python (rare — Brewfile installs python@3.14), [`bin/bootstrap-claude.sh`](bin/bootstrap-claude.sh) is a minimal symlink-only fallback.
+
+### Secrets manifest
+
+[`secrets/manifest.toml`](secrets/manifest.toml) is the tracked inventory of the gitignored files in `secrets/`: per entry — file name, which hosts need it, what consumes it, and a one-line recipe for obtaining it (never the value itself). `ai-sync doctor` and `status` check it: missing required-on-this-host files fail (exit 1) with the recipe as the fix hint, loose perms warn, and unlisted files in `secrets/` warn. Adding a secret file? Add its `[[secret]]` entry in the same commit.
 
 ### Existing machine that still has `~/.copilot/` from the old layout
 
@@ -75,7 +85,15 @@ bash /tmp/migrate-from-copilot.sh         # do it
 ~/.ai-config/bin/ai-config-sync   # thin shim for `ai-sync apply --pull`
 ```
 
-Solaris runs `ai-config-sync` on a launchd timer; the name stays for that reason.
+No host runs this automatically by default — run it manually after pushing (remote hosts: invoke via `bin/ai-config-sync`, which fixes PATH for Homebrew Python; a bare `ssh host '~/.ai-config/bin/ai-sync …'` finds only system Python 3.9 and exits 2).
+
+**Optional: auto-sync timer.** [`launchd/sh.user.ai-config-sync.plist`](launchd/sh.user.ai-config-sync.plist) runs `ai-config-sync` every 5 minutes. Not installed by default; opt a host in with:
+
+```bash
+cp ~/.ai-config/launchd/sh.user.ai-config-sync.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.user.ai-config-sync.plist
+```
+
+Caveat: `apply --pull` refuses on a dirty tree, so the timer silently no-ops (check `/opt/homebrew/var/log/ai-config-sync.err.log`) until local drift is committed or reconciled via `ai-sync promote`.
 
 ## Adding a new MCP server
 
@@ -108,7 +126,7 @@ ai-sync promote --to base claude        # share it across all hosts (warns on ov
 ai-sync apply --force                   # discard the drift
 ```
 
-Read [`docs/architecture.md#the-writeback-trap`](docs/architecture.md#the-writeback-trap) before opting in on more than one machine.
+Read [`docs/architecture.md` § "The writeback trap"](docs/architecture.md#the-writeback-trap-read-before-adding-your-first-overlay) before opting in on more than one machine.
 
 ## Selective adoption
 
