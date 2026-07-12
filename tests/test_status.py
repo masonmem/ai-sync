@@ -31,6 +31,15 @@ def test_status_detects_drifted_symlink(fake_home, fake_claude, ai_sync):
     assert "DRIFTED" in r.stdout
 
 
+def test_status_detects_cross_client_fanout_drift(fake_home, fake_claude, ai_sync):
+    ai_sync("apply", expect_success=True)
+    (fake_home / ".claude" / "CLAUDE.md").unlink()
+
+    r = ai_sync("status")
+    assert r.returncode == 1
+    assert "cross-client fan-out DRIFTED" in r.stdout
+
+
 def test_status_warns_loose_secret_perms(fake_home, fake_claude, ai_sync):
     (fake_home / ".ai-config" / "mcp" / "servers.toml").write_text("""
 [unifi]

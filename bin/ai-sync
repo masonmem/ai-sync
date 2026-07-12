@@ -20,6 +20,7 @@ Environment:
 from __future__ import annotations
 
 import difflib
+import re
 import sys
 
 if sys.version_info < (3, 11):
@@ -433,11 +434,43 @@ def claude_mcp_get(name: str) -> bool:
     return r.returncode == 0
 
 
+def claude_mcp_entry(name: str) -> dict | None:
+    """Read one user-scoped Claude MCP entry, or None if unavailable/missing."""
+    path = HOME / ".claude.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    entry = data.get("mcpServers", {}).get(name)
+    return entry if isinstance(entry, dict) else None
+
+
+def claude_mcp_matches(name: str, command: str, args: list[str]) -> bool:
+    """Check command/args, falling back to the CLI when config is unavailable."""
+    entry = claude_mcp_entry(name)
+    if entry is not None:
+        return entry.get("command") == command and entry.get("args", []) == args
+    return claude_mcp_get(name)
+
+
 def claude_mcp_add(name: str, command: str, args: list[str]) -> bool:
     cmd = ["claude", "mcp", "add", "--scope", "user", name, command, *args]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         err(f"claude mcp add {name} failed: {r.stderr.strip()}")
+        return False
+    return True
+
+
+def claude_mcp_remove(name: str) -> bool:
+    r = subprocess.run(
+        ["claude", "mcp", "remove", "--scope", "user", name],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        err(f"claude mcp remove {name} failed: {r.stderr.strip()}")
         return False
     return True
 
@@ -451,11 +484,16 @@ def register_mcp_claude(servers: dict[str, dict]) -> bool:
     for name, cfg in servers.items():
         if not selected_for_host(cfg) or not selected_for_client(cfg, "claude"):
             continue
-        if claude_mcp_get(name):
-            info(f"mcp:claude:{name} already registered")
-            continue
         command = expand(cfg["command"])
         args = [expand(a) for a in cfg.get("args", [])]
+        if claude_mcp_matches(name, command, args):
+            info(f"mcp:claude:{name} already registered")
+            continue
+        if claude_mcp_entry(name) is not None:
+            info(f"mcp:claude:{name} registration drifted; replacing")
+            if not claude_mcp_remove(name):
+                ok = False
+                continue
         if claude_mcp_add(name, command, args):
             info(f"mcp:claude:{name} registered → {command}")
         else:
@@ -530,6 +568,34 @@ def _repo_state() -> tuple[str, bool]:
     branch_line = lines[0] if lines else "??"
     dirty = any(not l.startswith("##") for l in lines)
     return (branch_line.removeprefix("## "), dirty)
+
+
+def _fanout_doctor(fix: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run the portable cross-client fan-out checker."""
+    doctor = AI_CONFIG / "bin" / "ai-sync-doctor"
+    if not doctor.exists():
+        return subprocess.CompletedProcess(
+            [str(doctor)], 1, "", f"missing fan-out doctor: {doctor}\n"
+        )
+    env = os.environ.copy()
+    env["AI_SYNC_REPO"] = str(AI_CONFIG)
+    args = [str(doctor), *(["--fix"] if fix else [])]
+    return subprocess.run(args, capture_output=True, text=True, env=env)
+
+
+def _fanout_check() -> CheckResult:
+    result = _fanout_doctor()
+    if result.returncode == 0:
+        return CheckResult(
+            "fanout", CHECK, "cross-client instructions and skill links", None
+        )
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
+    failed = next((line.strip() for line in output.splitlines() if "✗" in line), "")
+    detail = f": {failed.replace('✗', '').strip()}" if failed else ""
+    return CheckResult(
+        "fanout", CROSS, f"cross-client fan-out DRIFTED{detail}",
+        "ai-sync apply  # runs ai-sync-doctor --fix; refuses to overwrite unknown real files",
+    )
 
 
 @dataclass(frozen=True)
@@ -632,11 +698,15 @@ def _mcp_checks(name: str, cfg: dict, copilot_state: dict[str, bool]) -> list[Ch
         rows.append(CheckResult("mcp", CHECK, f"{name} claude:   (claude CLI not installed)", None))
     elif not selected_for_client(cfg, "claude"):
         rows.append(CheckResult("mcp", CHECK, f"{name} claude:   (skipped)", None))
-    elif claude_mcp_get(name):
+    elif claude_mcp_matches(
+        name,
+        expand(cfg["command"]),
+        [expand(a) for a in cfg.get("args", [])],
+    ):
         rows.append(CheckResult("mcp", CHECK, f"{name} claude:   registered", None))
     else:
         rows.append(CheckResult(
-            "mcp", CROSS, f"{name} claude:   NOT REGISTERED",
+            "mcp", CROSS, f"{name} claude:   NOT REGISTERED OR DRIFTED",
             "ai-sync apply",
         ))
 
@@ -743,6 +813,7 @@ def _all_checks() -> list[CheckResult]:
     for name, cfg in servers.items():
         rows.extend(_mcp_checks(name, cfg, copilot_state))
     rows.extend(_secrets_manifest_checks())
+    rows.append(_fanout_check())
     return rows
 
 
@@ -767,6 +838,8 @@ def status_cmd() -> int:
     if not sym_rows:
         print(f"  {DIM('(no tool homes present)')}")
     for r in sym_rows:
+        print(f"  {r.mark} {r.description}")
+    for r in [r for r in rows if r.category == "fanout"]:
         print(f"  {r.mark} {r.description}")
     print()
 
@@ -840,6 +913,14 @@ def apply_cmd(pull: bool, force: bool = False) -> int:
     # Write the Copilot mcp.json BEFORE re-linking so a fresh machine doesn't
     # briefly see a dangling symlink.
     write_copilot_mcp_json(servers)
+    fanout = _fanout_doctor(fix=True)
+    if fanout.returncode != 0:
+        if fanout.stdout:
+            print(fanout.stdout, end="")
+        if fanout.stderr:
+            print(fanout.stderr, end="", file=sys.stderr)
+        err("cross-client fan-out repair failed")
+        return 1
     global _FORCE_APPLY
     _FORCE_APPLY = force
     try:

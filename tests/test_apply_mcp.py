@@ -71,6 +71,23 @@ def test_apply_mcp_skips_already_registered_in_claude(fake_home, fake_claude, ai
     assert adds_after == adds_before, "second apply must not re-add already-registered servers"
 
 
+def test_apply_mcp_replaces_drifted_claude_registration(fake_home, fake_claude, ai_sync):
+    _seed_servers(fake_home)
+    _seed_wrappers(fake_home)
+    fake_claude["state"].write_text("unifi\n")
+    (fake_home / ".claude.json").write_text(json.dumps({
+        "mcpServers": {
+            "unifi": {"command": "/old/wrapper.sh", "args": []},
+        }
+    }))
+
+    ai_sync("apply", expect_success=True)
+
+    invocations = parse_invocations(fake_claude["log"])
+    assert ["mcp", "remove", "--scope", "user", "unifi"] in invocations
+    assert any(argv[:5] == ["mcp", "add", "--scope", "user", "unifi"] for argv in invocations)
+
+
 def test_apply_mcp_respects_host_filter(fake_home, fake_claude, ai_sync):
     (fake_home / ".ai-config" / "mcp" / "servers.toml").write_text("""
 [only-elsewhere]

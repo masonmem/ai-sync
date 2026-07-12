@@ -3,7 +3,7 @@
 Every test runs against an isolated $HOME / $AI_CONFIG tree under tmp_path and
 a fake `claude` binary on PATH that records argv and simulates the registration
 state. No real network, no real `claude` invocation, no touching the user's
-actual ~/.ai-config.
+actual ~/code/ai-sync.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ AI_SYNC = REPO_ROOT / "bin" / "ai-sync"
 
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
-    """Build an isolated ~/.ai-config with the minimum file tree ai-sync expects.
+    """Build an isolated AI_CONFIG with the minimum file tree ai-sync expects.
 
     Returns the fake HOME path. Sets HOME and AI_CONFIG env vars and seeds an
     initial git commit so `git diff --quiet` succeeds.
@@ -31,6 +31,8 @@ def fake_home(tmp_path, monkeypatch):
     ai = home / ".ai-config"
     ai.mkdir(parents=True)
     (ai / "skills").mkdir()
+    (ai / "skills" / "general").mkdir()
+    (ai / "skills" / "personal").mkdir()
     (ai / "bin").mkdir()
     (ai / "secrets").mkdir()
     (ai / "claude").mkdir()
@@ -38,6 +40,9 @@ def fake_home(tmp_path, monkeypatch):
     (ai / "mcp").mkdir()
     (ai / "agents").mkdir()
     (ai / "agents" / "general.md").write_text("# test instructions\n")
+    doctor = ai / "bin" / "ai-sync-doctor"
+    doctor.write_bytes((REPO_ROOT / "bin" / "ai-sync-doctor").read_bytes())
+    doctor.chmod(0o755)
     (ai / "claude" / "settings.json").write_text("{}\n")
     (ai / "copilot" / "settings.json").write_text("{}\n")
     (ai / "mcp.json").write_text('{"mcpServers": {}}\n')

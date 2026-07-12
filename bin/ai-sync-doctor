@@ -67,8 +67,12 @@ echo "ai-sync-doctor: repo=$REPO host=$HOSTN personal=$([ $PERSONAL = 1 ] && ech
 
 [ -d "$REPO/agents" ] || { fail "$REPO/agents missing — wrong repo path? (clone to ~/code/ai-sync or set AI_SYNC_REPO)"; echo "ai-sync-doctor: $FAILS failure(s)"; exit 1; }
 
-# legacy compat symlink from the ai-config era — should be gone
-if [ -L "$HOME/.ai-config" ]; then
+# legacy compat symlink from the ai-config era — should be gone. Skip this
+# migration assertion when an explicit AI_SYNC_REPO points there (isolated
+# tests and other nonstandard layouts are supported).
+if [ "$REPO" = "$HOME/.ai-config" ]; then
+  skip "legacy-path check disabled for explicit AI_SYNC_REPO=$REPO"
+elif [ -L "$HOME/.ai-config" ]; then
   if [ "$FIX" = 1 ]; then
     rm "$HOME/.ai-config" && fixed "removed legacy ~/.ai-config compat symlink"
   else

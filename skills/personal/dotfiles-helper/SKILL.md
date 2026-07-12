@@ -29,7 +29,7 @@ There are two repos in play:
 | Machine-specific git identity | `~/.gitconfig.local` (untracked, `[include]`-d by `~/.gitconfig`) | Edit local file |
 | New MCP server (user-global) | `~/code/ai-sync/mcp/servers.toml` (single source of truth) + optional `~/code/ai-sync/bin/<name>-wrapper.sh` for secrets, then `ai-sync apply` | See "Adding an MCP server" below |
 | New MCP server (project-specific) | `<repo>/.github/mcp.json` (Copilot) or `<repo>/.mcp.json` (Claude Code) | Same wrapper pattern works |
-| New personal skill | `~/code/ai-sync/skills/personal/<name>/SKILL.md` (or `skills/general/<name>/` once portable skills exist), plus a per-skill symlink in `~/.claude/skills/` | See "Adding a personal skill" below |
+| New personal skill | `~/code/ai-sync/skills/personal/<name>/SKILL.md` (or `skills/general/<name>/` once portable skills exist), then `ai-sync apply` | See "Adding a personal skill" below |
 | New personal agent | `~/code/ai-sync/agents/` holds only `general.md` (the global instruction file); per-agent files are **reserved, not yet wired** (no fan-out link; propose wiring before relying on it) | — |
 | Machine-specific AI-tool setting (model, effortLevel, plugins) | `~/code/ai-sync/hosts/<lowercase-short-hostname>/claude-settings.json` overlay (deep-merged over `claude/settings.json`), then `ai-sync apply` | Reconcile later runtime writebacks with `ai-sync diff claude` + `ai-sync promote --to overlay\|base claude`. Never hand-edit the shared `claude/settings.json` for one machine's prefs. |
 | Project-scoped instructions | `<repo>/AGENTS.md` (canonical, PROJECT-SPECIFIC only) + `<repo>/CLAUDE.md` containing `@AGENTS.md` — see `~/code/ai-sync/templates/` | — |
@@ -92,7 +92,7 @@ Decision: does this MCP server need secrets (API keys, tokens)?
 ```
 
 1. `name` must match the directory; `description` is what the host CLI pattern-matches against to decide when to load the skill — write it as "Use when … Not for …" so it surfaces at the right moments and stays out of adjacent ones. Same SKILL.md format works for both Copilot CLI and Claude Code.
-2. Symlink it for Claude Code: `ln -s ~/code/ai-sync/skills/personal/<name> ~/.claude/skills/<name>`.
+2. Run `ai-sync apply`; it creates the per-skill hub links for every installed client and excludes personal skills from hosts without a `hosts/<host>/` marker.
 3. Verify with `ai-sync doctor`. Copilot: `/skills reload`. Claude Code: restart the session.
 
 ## Verifying the change

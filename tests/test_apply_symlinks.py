@@ -10,8 +10,7 @@ def _is_link_to(link, target):
 def test_apply_creates_claude_symlinks(fake_home, fake_claude, ai_sync):
     ai_sync("apply", expect_success=True)
     ai = fake_home / ".ai-config"
-    # CLAUDE.md and skills are owned by bin/ai-sync-doctor since the 2026-07
-    # consolidation (real @-import file + per-skill links); apply manages only:
+    assert (fake_home / ".claude" / "CLAUDE.md").read_text() == "@~/code/ai-sync/agents/general.md"
     assert _is_link_to(fake_home / ".claude" / "bin",           ai / "bin")
     assert _is_link_to(fake_home / ".claude" / "secrets",       ai / "secrets")
     assert _is_link_to(fake_home / ".claude" / "settings.json", ai / "claude" / "settings.json")
@@ -23,6 +22,20 @@ def test_apply_creates_copilot_symlinks(fake_home, fake_claude, ai_sync):
     assert _is_link_to(fake_home / ".copilot" / "copilot-instructions.md", ai / "agents" / "general.md")
     assert _is_link_to(fake_home / ".copilot" / "mcp-config.json",         ai / "mcp.json")
     assert _is_link_to(fake_home / ".copilot" / "settings.json",           ai / "copilot" / "settings.json")
+
+
+def test_apply_creates_cross_client_skill_hub(fake_home, fake_claude, ai_sync):
+    ai = fake_home / ".ai-config"
+    skill = ai / "skills" / "general" / "portable-skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("---\nname: portable-skill\ndescription: test\n---\n")
+
+    ai_sync("apply", expect_success=True)
+
+    hub_skill = fake_home / ".claude" / "skills" / "portable-skill"
+    assert _is_link_to(hub_skill, skill)
+    assert _is_link_to(fake_home / ".copilot" / "skills", fake_home / ".claude" / "skills")
+    assert _is_link_to(fake_home / ".agents" / "skills", fake_home / ".claude" / "skills")
 
 
 def test_apply_skips_tool_homes_that_dont_exist(fake_home, fake_claude, ai_sync):
@@ -70,7 +83,7 @@ def test_apply_refuses_to_clobber_physical_file(fake_home, fake_claude, ai_sync)
 
     r = ai_sync("apply")
     assert r.returncode != 0
-    assert "refuse to clobber" in (r.stdout + r.stderr).lower()
+    assert "real file/dir in the way" in (r.stdout + r.stderr).lower()
     # The blocker is still there
     assert blocker.is_file() and not blocker.is_symlink()
     assert blocker.read_text() == "important user file, do not nuke"

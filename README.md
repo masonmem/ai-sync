@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/masonmem/ai-sync/actions/workflows/test.yml/badge.svg)](https://github.com/masonmem/ai-sync/actions/workflows/test.yml)
 
-Personal AI brain — global instructions, custom skills, agent profiles, MCP wrapper scripts, and per-tool settings. Shared by **Claude Code** (via `~/.claude/`) and **Copilot CLI** (via `~/.copilot/`); designed to be reproducible across machines via [`bin/ai-sync`](bin/ai-sync).
+Personal AI brain — global instructions, custom skills, MCP wrappers, and per-tool settings. Shared by **Claude Code**, **Copilot CLI**, and **Codex** through their native home-directory surfaces; reproducible across machines via [`bin/ai-sync`](bin/ai-sync).
 
 Sibling to [my dotfiles repo](https://github.com/masonmem/dotfiles): dotfiles configures the *machine*, this repo configures the *AI brain* on top of it.
 
@@ -29,9 +29,10 @@ The full architecture, including the scope-by-path rule, the per-host overlay wr
 
 | Path | Tracked? | Scope | Purpose |
 |---|---|---|---|
-| `instructions.md`       | ✅ | shared (both tools) | Personal global instructions |
-| `skills/<name>/SKILL.md`| ✅ | shared | Personal skills (loaded on demand by description match) |
-| `agents/`, `hooks/`     | ✅ | shared | Reserved for topic-specific agent profiles and hook scripts |
+| `agents/general.md`     | ✅ | shared | Global instructions linked/imported by all three clients |
+| `skills/general/`       | ✅ | all hosts | Portable skills (currently reserved/empty) |
+| `skills/personal/`      | ✅ | personal hosts | Machine/homelab-aware skills, linked per skill |
+| `rules/`                | ✅ | Claude only | Optional shared Claude rules; linked only when non-empty |
 | `bin/`                  | ✅ | shared | `ai-sync` CLI, MCP/statusline wrapper scripts |
 | `mcp/servers.toml`      | ✅ | translated | **Single source of truth for MCP servers.** Read by `ai-sync apply`. |
 | `mcp.json`              | ❌ (gitignored) | generated | Copilot's mcp.json — regenerated each `ai-sync apply` from `mcp/servers.toml`; embeds machine-absolute paths, so it can't be tracked. Do not hand-edit. |
@@ -39,7 +40,7 @@ The full architecture, including the scope-by-path rule, the per-host overlay wr
 | `claude/settings.json`  | ✅ | Claude Code only | Claude Code native settings (theme, plugins, statusLine, etc.) |
 | `docs/architecture.md`  | ✅ | docs | The "where does this go?" rule |
 | `tests/`                | ✅ | tests | pytest suite for `bin/ai-sync` |
-| `hosts/<host>/*.json`   | ✅ (when present) | per-host overlay | Optional deep-merge overlays for settings.json files. Adding one switches the target from symlink to render mode — read `docs/architecture.md` § "The writeback trap" before opting in. |
+| `hosts/<host>/*.json`   | ✅ (when present) | per-host overlay + host identity | Optional settings overlays; the host directory also marks a personal machine eligible for `skills/personal/`. |
 | `secrets/`              | ❌ (gitignored) | per-machine | `.env` files sourced by `bin/*-wrapper.sh` |
 | `state/`                | ❌ (gitignored) | per-machine | Wrapper runtime side-effects (e.g. UniFi audit logs) |
 
@@ -54,14 +55,14 @@ Order matters: **dotfiles first** — `brew bundle` there provides Python 3.11+ 
 # 2. Clone this repo
 git clone git@github.com:masonmem/ai-sync.git ~/code/ai-sync
 chmod +x ~/code/ai-sync/bin/ai-sync ~/code/ai-sync/bin/*.sh
-# 3. Apply (symlinks, MCP registration, mcp.json generation)
+# 3. Apply (instruction/skill fan-out, settings, MCP registration/generation)
 ~/code/ai-sync/bin/ai-sync apply
 # 4. Populate secrets, guided by the manifest:
 ~/code/ai-sync/bin/ai-sync doctor   # lists every secret THIS host needs + how to obtain each
 # Restart any running Claude Code session so it loads new MCP servers.
 ```
 
-`ai-sync apply` requires Python 3.11+ (for `tomllib`). If you're on a host without Python (rare — Brewfile installs python@3.14), [`bin/bootstrap-claude.sh`](bin/bootstrap-claude.sh) is a minimal symlink-only fallback.
+`ai-sync apply` requires Python 3.11+ (for `tomllib`). If Python is unavailable, [`bin/bootstrap-claude.sh`](bin/bootstrap-claude.sh) performs the safe Claude/link subset using the portable shell doctor.
 
 ### Secrets manifest
 
@@ -130,11 +131,11 @@ Read [`docs/architecture.md` § "The writeback trap"](docs/architecture.md#the-w
 
 ## Selective adoption
 
-Want just one skill? Copy `skills/<name>/` into your own `~/code/ai-sync/skills/`. Want the MCP wiring for one server? Copy the matching `bin/<name>-mcp-wrapper.sh`, the entry from `mcp/servers.toml`, and create `secrets/<name>.env` locally.
+Want just one skill? Copy `skills/general/<name>/` or `skills/personal/<name>/` into the matching tier. Want one MCP server? Copy its wrapper and registry entry, then create its local secret file.
 
 ## Conventions
 
-- Skills, agents, and MCP server names: lowercase, hyphen-separated.
+- Skill and MCP server names: lowercase, hyphen-separated.
 - Secrets never appear in tracked files. Wrappers in `bin/` source `~/code/ai-sync/secrets/<name>.env`.
 - Commits: [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`). No `Co-authored-by` trailers from any AI tool.
 - New behaviour in `bin/ai-sync` needs a test under `tests/`. Run with `~/code/ai-sync/bin/ai-sync test`.

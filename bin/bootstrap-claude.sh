@@ -25,7 +25,7 @@ log() { printf '\033[36m[bootstrap-claude]\033[0m %s\n' "$*"; }
 
 if [[ ! -d "$AI_CONFIG" ]]; then
   log "ERROR: $AI_CONFIG does not exist. Clone it first:"
-  log "  git clone git@github.com:masonmem/ai-config.git $AI_CONFIG"
+  log "  git clone git@github.com:masonmem/ai-sync.git $AI_CONFIG"
   exit 1
 fi
 
@@ -65,6 +65,15 @@ fi
 log "Python 3.11+ or ai-sync not available — doing minimal symlinks only."
 log "Install Python ≥ 3.11 (Brewfile has python@3.14) and rerun to get full apply."
 
+# Reuse the portable fan-out implementation so this fallback cannot drift
+# from the normal apply path.
+if [[ -x "$AI_CONFIG/bin/ai-sync-doctor" ]]; then
+  AI_SYNC_REPO="$AI_CONFIG" "$AI_CONFIG/bin/ai-sync-doctor" --fix
+else
+  log "ERROR: missing $AI_CONFIG/bin/ai-sync-doctor"
+  exit 1
+fi
+
 relink() {
   local target="$1" linkname="$2"
   if [[ ! -e "$target" ]]; then
@@ -74,8 +83,6 @@ relink() {
   ln -sfn "$target" "$linkname"
 }
 
-relink "$AI_CONFIG/instructions.md"      "$DOT_CLAUDE/CLAUDE.md"
-relink "$AI_CONFIG/skills"               "$DOT_CLAUDE/skills"
 relink "$AI_CONFIG/bin"                  "$DOT_CLAUDE/bin"
 relink "$AI_CONFIG/secrets"              "$DOT_CLAUDE/secrets"
 if [[ "$keep_settings" == 1 ]]; then

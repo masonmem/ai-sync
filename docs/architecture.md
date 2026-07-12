@@ -1,4 +1,4 @@
-# `~/.ai-config` architecture
+# `~/code/ai-sync` architecture
 
 This directory is the canonical "AI brain" — the shared layer consumed by
 Claude Code, Copilot CLI, and any future LLM client. It is paired with
@@ -10,9 +10,12 @@ Claude Code, Copilot CLI, and any future LLM client. It is paired with
 Every file in this repo answers exactly one question: "which tools does this
 affect?" That question is encoded in the **path**, not in the file's contents.
 
-| Path under `~/.ai-config/` | Scope | Notes |
+| Path under `~/code/ai-sync/` | Scope | Notes |
 |---|---|---|
-| `instructions.md`, `skills/`, `agents/`, `bin/`, `secrets/` | **shared** — every client | Symlinked into each client's home dir (`~/.claude/`, `~/.copilot/`). Formats here MUST be ones every consuming client accepts. |
+| `agents/general.md` | **shared** — every client | Linked by Codex/Copilot; imported by Claude through a real `CLAUDE.md` bridge. |
+| `skills/general/` | **shared** — every host | Portable per-skill links assembled in the client skill hub. |
+| `skills/personal/` | **personal hosts only** | Enabled when `hosts/<host>/` exists, keeping machine assumptions off work hosts. |
+| `bin/`, `secrets/` | **shared plumbing / local values** | Binaries are tracked; secret values are gitignored and inventoried by `secrets/manifest.toml`. |
 | `claude/…` | **Claude Code only** | The file lives at the path Claude Code expects (`claude/settings.json` → `~/.claude/settings.json`). |
 | `copilot/…` | **Copilot CLI only** | Same pattern. |
 | `mcp/servers.toml` | **all clients, translated** | The single source of truth for MCP servers. `ai-sync apply` reads this and emits each client's native registration. |
@@ -35,8 +38,8 @@ ignored it.
 
 The **only** concept where translation pays off is **MCP servers**: every tool
 has them, every tool stores them differently, and there are only ~5 fields to
-translate. So that's the only translator we maintain (`bin/ai-sync`,
-~400 lines of Python). For everything else, the per-tool file is in the
+translate. So that's the only translator we maintain (`bin/ai-sync`). For
+everything else, the per-tool file is in the
 per-tool directory in the tool's native schema — the rule above keeps that
 honest.
 
@@ -52,9 +55,8 @@ honest.
    on navi, holding permissions + plugin toggles) — an untracked alternative
    for machine prefs, but invisible to this repo, so overlays remain the
    reproducible path.
-3. **Per-project** → handled by each client's own project-scope mechanism
-   (`.claude/settings.json`, `.github/copilot-instructions.md`). Not this repo's
-   problem.
+3. **Per-project** → handled by each repo's `AGENTS.md` plus native client
+   project settings. Not this repo's problem.
 
 ## The `ai-sync` CLI
 
@@ -62,24 +64,24 @@ A single Python entry point (`bin/ai-sync`, stdlib-only) with seven subcommands.
 
 | Command | What it does | Exit code |
 |---|---|---|
-| `ai-sync status` | Reports symlink state, MCP registration in each client, secret-file permissions, and render-mode drift. Read-only. | `0` if clean, `1` if any drift detected. |
-| `ai-sync apply [--pull] [--force]` | Idempotent: renders `mcp.json` from `mcp/servers.toml`; refreshes symlinks (or renders host overlays) into `~/.claude/` and `~/.copilot/`; runs `claude mcp add` for any server not yet registered; sets +x on `bin/*.sh`. With `--pull`, runs `git pull --ff-only` first (refuses on dirty tree). With `--force`, overwrites rendered files that have drifted (loses tool writebacks). | `0` on success. |
+| `ai-sync status` | Reports complete cross-client fan-out, MCP registration, secret permissions, and render drift. Read-only. | `0` if clean, `1` if any drift detected. |
+| `ai-sync apply [--pull] [--force]` | Idempotent: repairs instruction/skill fan-out through `ai-sync-doctor --fix`, renders settings/MCP files, and registers missing Claude MCP servers. `--pull` fast-forwards first; `--force` discards rendered settings drift. | `0` on success. |
 | `ai-sync doctor` | Same checks as `status`, but each failure carries a one-line suggested fix command. | `0` if clean, `1` otherwise. |
 | `ai-sync diff [<target>]` | For render-mode targets (`claude`, `copilot`, or both), print a colorized unified diff between the actual rendered file and what `apply` would produce. Useful for inspecting tool writebacks before deciding where to promote them. | `0` if clean, `1` if any drift. |
 | `ai-sync promote --to <base\|overlay> [<target>]` | Top-level keys that differ between the rendered file and the expected render are merged into the chosen file (the shared base, or the per-host overlay), then `apply --force` re-renders. With `--to base`, warns about keys that the overlay still shadows. | `0` clean, `1` if any warning fired. |
 | `ai-sync mcp list` | Prints parsed `mcp/servers.toml` with placeholders expanded. | `0`. |
 | `ai-sync test` | Runs `pytest tests/`. | pytest exit code. |
 
-The two legacy bash scripts (`bin/bootstrap-claude.sh`, `bin/ai-config-sync`)
-remain as **shims** so external callers (the optional launchd timer in
-`launchd/`, remote `ssh host '…/ai-config-sync'` invocations, and
-muscle-memory) don't break. They delegate to `ai-sync apply`.
+The shell helpers (`bin/bootstrap-claude.sh`, `bin/ai-config-sync`, and
+`bin/ai-sync-doctor`) preserve remote/timer callers and Python-free bootstrap.
+The primary CLI orchestrates the doctor; the doctor retains the portable
+filesystem implementation.
 
 ## MCP registry: `mcp/servers.toml`
 
 The single declaration site for every MCP server. `ai-sync apply` is the only
 thing that should write to either `~/.claude.json` (via `claude mcp add`) or
-`~/.ai-config/mcp.json` (regenerated each apply). Schema:
+`~/code/ai-sync/mcp.json` (regenerated each apply). Schema:
 
 ```toml
 [<name>]
@@ -123,7 +125,7 @@ one link table — no schema generalisation required.
 `pytest tests/` (also reachable as `ai-sync test`). The test suite runs every
 subcommand against an isolated fake `$HOME` with a stub `claude` binary that
 records its argv to a file. No real network, no real `claude` invocation, no
-touching of the actual `~/.ai-config`. Fixtures live in `tests/conftest.py`.
+touching of the actual `~/code/ai-sync`. Fixtures live in `tests/conftest.py`.
 
 A test must be added whenever:
 - A new symlink is added to `*_LINKS` in `bin/ai-sync`.
@@ -162,12 +164,10 @@ and the next `ai-sync apply` refuses to overwrite (unless you pass
 
 The right reflex when status reports DRIFTED on a render-mode target:
 
-1. `diff $AI_CONFIG/claude/settings.json ~/.claude/settings.json` — see what
-   changed.
-2. Decide: is this change meant to be host-specific (→ promote to
-   `hosts/<host>/claude-settings.json`) or shared (→ promote to
-   `claude/settings.json`)?
-3. Hand-edit the appropriate file, commit, then `ai-sync apply`.
+1. `ai-sync diff claude` — inspect what changed.
+2. Promote it with `ai-sync promote --to overlay claude` (host-specific) or
+   `ai-sync promote --to base claude` (shared).
+3. Review the tracked diff, then commit it.
 
 If you don't want this trap, **don't add an overlay for that target**. The
 default symlink mode has no trap at all.

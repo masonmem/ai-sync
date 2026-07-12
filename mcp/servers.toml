@@ -5,7 +5,7 @@
 # the target tool's native registration format.
 #
 # Placeholders:
-#   ${AI_CONFIG}   — expands to $HOME/.ai-config at apply-time, not by the shell.
+#   ${AI_CONFIG}   — expands to $HOME/code/ai-sync at apply-time, not by the shell.
 #   ${HOME}        — expands to the current user's home directory.
 #
 # Per-entry keys:
