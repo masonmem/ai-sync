@@ -1,53 +1,19 @@
 ---
 name: context7-mcp
-description: This skill should be used when the user asks about libraries, frameworks, API references, or needs code examples. Activates for setup questions, code generation involving libraries, or mentions of specific frameworks like React, Vue, Next.js, Prisma, Supabase, etc.
+description: Use when answering questions about a library, framework, SDK, or CLI tool, or writing code against one (React, Next.js, Prisma, Tailwind, Django, etc.) — fetch current docs via Context7 instead of trusting training data, even for well-known libraries. Not for general programming concepts, refactoring, debugging business logic, or code review.
 ---
 
-When the user asks about libraries, frameworks, or needs code examples, use Context7 to fetch current documentation instead of relying on training data.
+# context7-mcp
 
-## When to Use This Skill
+Fetch current library documentation via the Context7 MCP server before answering, instead of relying on training data.
 
-Activate this skill when the user:
+## Workflow
 
-- Asks setup or configuration questions ("How do I configure Next.js middleware?")
-- Requests code involving libraries ("Write a Prisma query for...")
-- Needs API references ("What are the Supabase auth methods?")
-- Mentions specific frameworks (React, Vue, Svelte, Express, Tailwind, etc.)
+1. **Resolve**: call `resolve-library-id` with `libraryName` (from the user's question) and `query` (the full question — improves ranking).
+2. **Select**: prefer exact name matches, official/primary packages over community forks, higher benchmark scores, and version-specific IDs when the user named a version ("React 19", "Next.js 15").
+3. **Fetch**: call `query-docs` with the selected `libraryId` (e.g. `/vercel/next.js`) and the user's specific question as `query`.
+4. **Answer** from the fetched docs, citing the library version when relevant.
 
-## How to Fetch Documentation
+If the Context7 tools aren't visible yet, load them via the host's tool-discovery mechanism (in Claude Code: ToolSearch for `mcp__context7__resolve-library-id` / `mcp__context7__query-docs`).
 
-### Step 1: Resolve the Library ID
-
-Call `resolve-library-id` with:
-
-- `libraryName`: The library name extracted from the user's question
-- `query`: The user's full question (improves relevance ranking)
-
-### Step 2: Select the Best Match
-
-From the resolution results, choose based on:
-
-- Exact or closest name match to what the user asked for
-- Higher benchmark scores indicate better documentation quality
-- If the user mentioned a version (e.g., "React 19"), prefer version-specific IDs
-
-### Step 3: Fetch the Documentation
-
-Call `query-docs` with:
-
-- `libraryId`: The selected Context7 library ID (e.g., `/vercel/next.js`)
-- `query`: The user's specific question
-
-### Step 4: Use the Documentation
-
-Incorporate the fetched documentation into your response:
-
-- Answer the user's question using current, accurate information
-- Include relevant code examples from the docs
-- Cite the library version when relevant
-
-## Guidelines
-
-- **Be specific**: Pass the user's full question as the query for better results
-- **Version awareness**: When users mention versions ("Next.js 15", "React 19"), use version-specific library IDs if available from the resolution step
-- **Prefer official sources**: When multiple matches exist, prefer official/primary packages over community forks
+Note: the Context7 MCP server ships its own server instructions covering the same guidance; this skill exists so hosts that don't surface MCP server instructions (e.g. Copilot CLI) still get the workflow.

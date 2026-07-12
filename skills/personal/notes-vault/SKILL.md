@@ -1,6 +1,6 @@
 ---
 name: notes-vault
-description: "@masonmem's personal Obsidian vault at ~/notes. Use when the user mentions \"my notes\", \"the inbox\", \"what did I write about X\", asks to save or draft a note, or anything else implying the personal vault."
+description: "Use when the user mentions \"my notes\", \"the inbox\", \"what did I write about X\", asks to save or draft a note, or anything else implying the personal Obsidian vault at ~/notes. Not for project docs or repo READMEs — those live in their repos."
 ---
 
 # notes-vault
