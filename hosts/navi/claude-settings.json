@@ -1,5 +1,5 @@
 {
-  "model": "opus",
+  "model": "claude-fable-5[1m]",
   "advisorModel": "opus",
   "effortLevel": "high",
   "enabledPlugins": {
@@ -8,5 +8,7 @@
   },
   "skipWorkflowUsageWarning": true,
   "agentPushNotifEnabled": true,
-  "inputNeededNotifEnabled": true
+  "inputNeededNotifEnabled": true,
+  "awaySummaryEnabled": false,
+  "fileCheckpointingEnabled": false
 }
