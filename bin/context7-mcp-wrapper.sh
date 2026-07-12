@@ -37,4 +37,7 @@ fi
 # resolvable.
 export PATH="/opt/homebrew/bin:${PATH}"
 
-exec npx -y @upstash/context7-mcp --api-key "${CONTEXT7_API_KEY}" "$@"
+# The server reads CONTEXT7_API_KEY from the environment (exported by the
+# set -a sourcing above). Do NOT pass it as --api-key argv — argv is visible
+# to every process on the machine via ps.
+exec npx -y @upstash/context7-mcp "$@"
