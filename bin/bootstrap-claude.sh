@@ -4,7 +4,7 @@
 # This script is the absolute-minimum fallback for hosts that don't yet have
 # Python + pipx + pytest set up. For everyday use, prefer the full CLI:
 #
-#   ~/.ai-config/bin/ai-sync apply
+#   ~/code/ai-sync/bin/ai-sync apply
 #
 # which is reproducibly tested, generates Copilot mcp.json from mcp/servers.toml,
 # registers MCP servers in Claude Code, and exits non-zero on drift.
@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-AI_CONFIG="${AI_CONFIG:-$HOME/.ai-config}"
+AI_CONFIG="${AI_CONFIG:-$HOME/code/ai-sync}"
 DOT_CLAUDE="$HOME/.claude"
 
 log() { printf '\033[36m[bootstrap-claude]\033[0m %s\n' "$*"; }

@@ -7,15 +7,15 @@
 # that lives outside git, then execs the server via npx.
 #
 # Setup on a new machine:
-#   mkdir -p ~/.ai-config/secrets
-#   cat > ~/.ai-config/secrets/context7.env <<'EOF'
+#   mkdir -p ~/code/ai-sync/secrets
+#   cat > ~/code/ai-sync/secrets/context7.env <<'EOF'
 #   CONTEXT7_API_KEY=ctx7sk-...        # mint: https://context7.com/dashboard
 #   EOF
-#   chmod 600 ~/.ai-config/secrets/context7.env
+#   chmod 600 ~/code/ai-sync/secrets/context7.env
 
 set -euo pipefail
 
-SECRETS_FILE="${HOME}/.ai-config/secrets/context7.env"
+SECRETS_FILE="${HOME}/code/ai-sync/secrets/context7.env"
 
 if [[ ! -f "${SECRETS_FILE}" ]]; then
   echo "context7-mcp-wrapper: missing ${SECRETS_FILE}" >&2

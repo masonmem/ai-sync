@@ -5,7 +5,7 @@
 #   right: kube context | context window % remaining
 #
 # Referenced from claude/settings.json as:
-#   "statusLine": { "type": "command", "command": "bash ~/.ai-config/bin/statusline.sh" }
+#   "statusLine": { "type": "command", "command": "bash ~/code/ai-sync/bin/statusline.sh" }
 #
 # Claude Code pipes a JSON status payload on stdin every render. Schema docs:
 # https://docs.claude.com/en/docs/claude-code/settings#statusline

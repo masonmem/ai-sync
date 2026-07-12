@@ -7,18 +7,18 @@
 # file that lives outside git, then execs the server.
 #
 # Setup on a new machine:
-#   mkdir -p ~/.ai-config/secrets
-#   cat > ~/.ai-config/secrets/unifi.env <<'EOF'
+#   mkdir -p ~/code/ai-sync/secrets
+#   cat > ~/code/ai-sync/secrets/unifi.env <<'EOF'
 #   UNIFI_API_KEY=your-unifi-api-key-here
 #   # Optional overrides — see unifi-mcp-server docs:
 #   # UNIFI_API_TYPE=cloud-ea        # cloud-v1 | cloud-ea | local
 #   # UNIFI_LOCAL_HOST=10.0.0.1      # required for UNIFI_API_TYPE=local
 #   EOF
-#   chmod 600 ~/.ai-config/secrets/unifi.env
+#   chmod 600 ~/code/ai-sync/secrets/unifi.env
 
 set -euo pipefail
 
-SECRETS_FILE="${HOME}/.ai-config/secrets/unifi.env"
+SECRETS_FILE="${HOME}/code/ai-sync/secrets/unifi.env"
 
 if [[ ! -f "${SECRETS_FILE}" ]]; then
   echo "unifi-mcp-wrapper: missing ${SECRETS_FILE}" >&2
@@ -33,7 +33,7 @@ set +a
 
 # The unifi-mcp-server writes audit.log into its cwd. Run it from a dedicated
 # state dir so the log doesn't land in whichever repo the user is working in.
-STATE_DIR="${HOME}/.ai-config/state/unifi-mcp"
+STATE_DIR="${HOME}/code/ai-sync/state/unifi-mcp"
 mkdir -p "${STATE_DIR}"
 cd "${STATE_DIR}"
 

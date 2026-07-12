@@ -3,7 +3,7 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <!--
-  Optional auto-sync timer for ~/.ai-config. NOT installed by default;
+  Optional auto-sync timer for ~/code/ai-sync. NOT installed by default;
   see README "Ongoing: pull and re-apply" for the install one-liner.
 
   Runs bin/ai-config-sync (a shim for "ai-sync apply" with the pull flag)
@@ -18,7 +18,7 @@
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>"$HOME/.ai-config/bin/ai-config-sync"</string>
+    <string>"$HOME/code/ai-sync/bin/ai-config-sync"</string>
   </array>
   <key>StartInterval</key>
   <integer>300</integer>

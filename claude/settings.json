@@ -32,7 +32,7 @@
   "theme": "dark-ansi",
   "statusLine": {
     "type": "command",
-    "command": "bash ~/.ai-config/bin/statusline.sh"
+    "command": "bash ~/code/ai-sync/bin/statusline.sh"
   },
   "skipAutoPermissionPrompt": true
 }

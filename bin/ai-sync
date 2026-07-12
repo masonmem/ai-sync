@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ai-sync — manage the shared ~/.ai-config brain across multiple LLM clients.
+"""ai-sync — manage the shared ~/code/ai-sync brain across multiple LLM clients.
 
 Subcommands:
     status               show what's linked / broken / missing; MCP registration state.
@@ -14,7 +14,7 @@ Subcommands:
     test                 run the pytest suite under $AI_CONFIG/tests/.
 
 Environment:
-    AI_CONFIG   override the canonical brain location (default: ~/.ai-config).
+    AI_CONFIG   override the canonical brain location (default: ~/code/ai-sync).
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ WARN  = YELLOW("!")
 
 # ── paths ────────────────────────────────────────────────────────────────────
 HOME      = pathlib.Path(os.environ.get("HOME", str(pathlib.Path.home())))
-AI_CONFIG = pathlib.Path(os.environ.get("AI_CONFIG", str(HOME / ".ai-config")))
+AI_CONFIG = pathlib.Path(os.environ.get("AI_CONFIG", str(HOME / "code" / "ai-sync")))
 
 CLAUDE_HOME  = HOME / ".claude"
 COPILOT_HOME = HOME / ".copilot"

@@ -1,4 +1,4 @@
-# ~/.ai-config
+# ~/code/ai-sync
 
 [![tests](https://github.com/masonmem/ai-sync/actions/workflows/test.yml/badge.svg)](https://github.com/masonmem/ai-sync/actions/workflows/test.yml)
 
@@ -21,7 +21,7 @@ ai-sync mcp list                  # parsed mcp/servers.toml
 ai-sync test                      # pytest tests/
 ```
 
-All commands are reachable via the symlink at `~/.claude/bin/ai-sync` and `~/.copilot/bin/ai-sync`, or by the absolute path `~/.ai-config/bin/ai-sync`. The CLI requires **Python 3.11+** (for `tomllib`).
+All commands are reachable via the symlink at `~/.claude/bin/ai-sync` and `~/.copilot/bin/ai-sync`, or by the absolute path `~/code/ai-sync/bin/ai-sync`. The CLI requires **Python 3.11+** (for `tomllib`).
 
 The full architecture, including the scope-by-path rule, the per-host overlay writeback trap, and the rationale for not maintaining a canonical-config DSL, lives in [`docs/architecture.md`](docs/architecture.md). Start there before making structural changes.
 
@@ -52,12 +52,12 @@ Order matters: **dotfiles first** — `brew bundle` there provides Python 3.11+ 
 ```bash
 # 1. ~/dotfiles bootstrapped (brew bundle done — gives python 3.11+)
 # 2. Clone this repo
-git clone git@github.com:masonmem/ai-sync.git ~/.ai-config
-chmod +x ~/.ai-config/bin/ai-sync ~/.ai-config/bin/*.sh
+git clone git@github.com:masonmem/ai-sync.git ~/code/ai-sync
+chmod +x ~/code/ai-sync/bin/ai-sync ~/code/ai-sync/bin/*.sh
 # 3. Apply (symlinks, MCP registration, mcp.json generation)
-~/.ai-config/bin/ai-sync apply
+~/code/ai-sync/bin/ai-sync apply
 # 4. Populate secrets, guided by the manifest:
-~/.ai-config/bin/ai-sync doctor   # lists every secret THIS host needs + how to obtain each
+~/code/ai-sync/bin/ai-sync doctor   # lists every secret THIS host needs + how to obtain each
 # Restart any running Claude Code session so it loads new MCP servers.
 ```
 
@@ -76,21 +76,21 @@ curl -fsSLo /tmp/migrate-from-copilot.sh \
   https://raw.githubusercontent.com/masonmem/ai-sync/main/bin/migrate-from-copilot.sh
 bash /tmp/migrate-from-copilot.sh --dry   # preview
 bash /tmp/migrate-from-copilot.sh         # do it
-~/.ai-config/bin/ai-sync apply
+~/code/ai-sync/bin/ai-sync apply
 ```
 
 ### Ongoing: pull and re-apply
 
 ```bash
-~/.ai-config/bin/ai-config-sync   # thin shim for `ai-sync apply --pull`
+~/code/ai-sync/bin/ai-config-sync   # thin shim for `ai-sync apply --pull`
 ```
 
-No host runs this automatically by default — run it manually after pushing (remote hosts: invoke via `bin/ai-config-sync`, which fixes PATH for Homebrew Python; a bare `ssh host '~/.ai-config/bin/ai-sync …'` finds only system Python 3.9 and exits 2).
+No host runs this automatically by default — run it manually after pushing (remote hosts: invoke via `bin/ai-config-sync`, which fixes PATH for Homebrew Python; a bare `ssh host '~/code/ai-sync/bin/ai-sync …'` finds only system Python 3.9 and exits 2).
 
 **Optional: auto-sync timer.** [`launchd/sh.user.ai-config-sync.plist`](launchd/sh.user.ai-config-sync.plist) runs `ai-config-sync` every 5 minutes. Not installed by default; opt a host in with:
 
 ```bash
-cp ~/.ai-config/launchd/sh.user.ai-config-sync.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.user.ai-config-sync.plist
+cp ~/code/ai-sync/launchd/sh.user.ai-config-sync.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.user.ai-config-sync.plist
 ```
 
 Caveat: `apply --pull` refuses on a dirty tree, so the timer silently no-ops (check `/opt/homebrew/var/log/ai-config-sync.err.log`) until local drift is committed or reconciled via `ai-sync promote`.
@@ -99,7 +99,7 @@ Caveat: `apply --pull` refuses on a dirty tree, so the timer silently no-ops (ch
 
 1. If it needs secrets, write `bin/<name>-mcp-wrapper.sh` following [`bin/unifi-mcp-wrapper.sh`](bin/unifi-mcp-wrapper.sh)'s pattern.
 2. Add a `[<name>]` table to [`mcp/servers.toml`](mcp/servers.toml).
-3. `~/.ai-config/bin/ai-sync apply`
+3. `~/code/ai-sync/bin/ai-sync apply`
 4. Restart any running Claude Code session.
 
 The CLI handles `claude mcp add` and the Copilot `mcp.json` regeneration. There is no JSON to edit twice.
@@ -110,8 +110,8 @@ Some settings legitimately differ across hosts (theme, statusLine command, enabl
 
 ```bash
 # 1. Create the overlay (only the keys you want to override)
-mkdir -p ~/.ai-config/hosts/$(hostname -s)
-echo '{"theme": "dark"}' > ~/.ai-config/hosts/$(hostname -s)/claude-settings.json
+mkdir -p ~/code/ai-sync/hosts/$(hostname -s)
+echo '{"theme": "dark"}' > ~/code/ai-sync/hosts/$(hostname -s)/claude-settings.json
 
 # 2. Re-render
 ai-sync apply
@@ -130,11 +130,11 @@ Read [`docs/architecture.md` § "The writeback trap"](docs/architecture.md#the-w
 
 ## Selective adoption
 
-Want just one skill? Copy `skills/<name>/` into your own `~/.ai-config/skills/`. Want the MCP wiring for one server? Copy the matching `bin/<name>-mcp-wrapper.sh`, the entry from `mcp/servers.toml`, and create `secrets/<name>.env` locally.
+Want just one skill? Copy `skills/<name>/` into your own `~/code/ai-sync/skills/`. Want the MCP wiring for one server? Copy the matching `bin/<name>-mcp-wrapper.sh`, the entry from `mcp/servers.toml`, and create `secrets/<name>.env` locally.
 
 ## Conventions
 
 - Skills, agents, and MCP server names: lowercase, hyphen-separated.
-- Secrets never appear in tracked files. Wrappers in `bin/` source `~/.ai-config/secrets/<name>.env`.
+- Secrets never appear in tracked files. Wrappers in `bin/` source `~/code/ai-sync/secrets/<name>.env`.
 - Commits: [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`). No `Co-authored-by` trailers from any AI tool.
-- New behaviour in `bin/ai-sync` needs a test under `tests/`. Run with `~/.ai-config/bin/ai-sync test`.
+- New behaviour in `bin/ai-sync` needs a test under `tests/`. Run with `~/code/ai-sync/bin/ai-sync test`.

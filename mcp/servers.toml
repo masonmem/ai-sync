@@ -24,6 +24,7 @@
 command     = "${AI_CONFIG}/bin/unifi-mcp-wrapper.sh"
 description = "UniFi network management — talks to the UCG Ultra console"
 secrets_env = "${AI_CONFIG}/secrets/unifi.env"
+hosts       = ["navi", "solaris"]
 
 [ynab]
 command     = "${AI_CONFIG}/bin/ynab-mcp-wrapper.sh"
@@ -35,3 +36,4 @@ hosts       = ["navi"]
 command     = "${AI_CONFIG}/bin/context7-mcp-wrapper.sh"
 description = "Context7 — up-to-date library/framework documentation lookup"
 secrets_env = "${AI_CONFIG}/secrets/context7.env"
+hosts       = ["navi", "solaris"]

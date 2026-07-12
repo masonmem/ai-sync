@@ -7,16 +7,16 @@
 # machine-local file that lives outside git, then execs the server.
 #
 # Setup on a new machine:
-#   mkdir -p ~/.ai-config/secrets
-#   cat > ~/.ai-config/secrets/ynab.env <<'EOF'
+#   mkdir -p ~/code/ai-sync/secrets
+#   cat > ~/code/ai-sync/secrets/ynab.env <<'EOF'
 #   # Personal access token from YNAB → Account Settings → Developer Settings.
 #   YNAB_API_TOKEN=your-ynab-personal-access-token-here
 #   EOF
-#   chmod 600 ~/.ai-config/secrets/ynab.env
+#   chmod 600 ~/code/ai-sync/secrets/ynab.env
 
 set -euo pipefail
 
-SECRETS_FILE="${HOME}/.ai-config/secrets/ynab.env"
+SECRETS_FILE="${HOME}/code/ai-sync/secrets/ynab.env"
 
 if [[ ! -f "${SECRETS_FILE}" ]]; then
   echo "ynab-mcp-wrapper: missing ${SECRETS_FILE}" >&2

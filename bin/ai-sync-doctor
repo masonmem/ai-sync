@@ -3,26 +3,35 @@
 # Exits nonzero listing every failure. Companion to bin/ai-sync (which owns
 # MCP registration, settings render/promote, and the bin/secrets links).
 #
-# Architecture verified here (2026-07 consolidation):
-#   ~/.ai-config                        -> <repo>                (compatibility)
+# Architecture verified here (2026-07 consolidation; repo IS ~/code/ai-sync,
+# no ~/.ai-config compatibility symlink):
 #   ~/.codex/AGENTS.md                  -> <repo>/agents/general.md   (skip if no ~/.codex)
 #   ~/.claude/CLAUDE.md                 =  real file, exactly "@~/code/ai-sync/agents/general.md"
 #   ~/.claude/rules/shared              -> <repo>/rules          (only if rules/ has content)
-#   ~/.claude/skills/<name>             -> <repo>/skills/{general,personal}/<name>  (per skill)
-#   ~/.agents/skills                    -> ~/.claude/skills
+#   <hub>/<name>                        -> <repo>/skills/{general,personal}/<name>  (per skill)
+#   ~/.agents/skills                    -> <hub>
 #   ~/.copilot/copilot-instructions.md  -> <repo>/agents/general.md   (skip if no ~/.copilot)
-#   ~/.copilot/skills                   -> ~/.claude/skills           (skip if no ~/.copilot)
+#   ~/.copilot/skills                   -> <hub>  (or IS the hub on copilot-only machines)
 #
-# --fix repairs missing or wrong SYMLINKS and converts the legacy layout
-# (CLAUDE.md/skills as whole symlinks) to the new one. It never overwrites a
-# real file or directory whose content it does not recognise — those stay
-# failures for a human to resolve.
+# The skills hub is ~/.claude/skills when Claude Code is installed, else
+# ~/.copilot/skills (copilot-only machines, e.g. work).
+#
+# Host scoping: skills/personal/* links are created ONLY on personal machines,
+# identified by a hosts/<short-hostname>/ directory in the repo (navi, solaris).
+# Machines without one (e.g. a work machine) get skills/general/* only, and
+# --fix removes any personal links found there.
+#
+# --fix repairs missing or wrong SYMLINKS, converts the legacy layout
+# (CLAUDE.md/skills as whole symlinks, ~/.ai-config compat symlink), and
+# removes out-of-scope or dangling skill links. It never overwrites a real
+# file or directory whose content it does not recognise.
 
 set -u
 REPO="${AI_SYNC_REPO:-$HOME/code/ai-sync}"
 FIX=0
 [ "${1:-}" = "--fix" ] && FIX=1
 FAILS=0
+HOSTN=$(hostname -s | tr '[:upper:]' '[:lower:]')
 
 ok()    { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 fixed() { printf '  \033[33m⟳\033[0m %s\n' "$*"; }
@@ -52,15 +61,29 @@ check_link() { # $1=link $2=expected target
   fi
 }
 
-echo "ai-sync-doctor: repo=$REPO$([ "$FIX" = 1 ] && echo ' (--fix)')"
+if [ -d "$REPO/hosts/$HOSTN" ]; then PERSONAL=1; else PERSONAL=0; fi
 
-[ -d "$REPO/agents" ] || { fail "$REPO/agents missing — wrong repo path?"; echo "ai-sync-doctor: $FAILS failure(s)"; exit 1; }
+echo "ai-sync-doctor: repo=$REPO host=$HOSTN personal=$([ $PERSONAL = 1 ] && echo yes || echo no)$([ "$FIX" = 1 ] && echo ' (--fix)')"
 
-# compatibility link (a real pre-migration clone here must be moved by hand)
-if [ ! -L "$HOME/.ai-config" ] && [ -d "$HOME/.ai-config" ]; then
+[ -d "$REPO/agents" ] || { fail "$REPO/agents missing — wrong repo path? (clone to ~/code/ai-sync or set AI_SYNC_REPO)"; echo "ai-sync-doctor: $FAILS failure(s)"; exit 1; }
+
+# legacy compat symlink from the ai-config era — should be gone
+if [ -L "$HOME/.ai-config" ]; then
+  if [ "$FIX" = 1 ]; then
+    rm "$HOME/.ai-config" && fixed "removed legacy ~/.ai-config compat symlink"
+  else
+    fail "$HOME/.ai-config: legacy compat symlink still present (run --fix)"
+  fi
+elif [ -d "$HOME/.ai-config" ]; then
   fail "$HOME/.ai-config is a real directory — move it: mv ~/.ai-config ~/code/ai-sync, then re-run --fix"
 else
-  check_link "$HOME/.ai-config" "$REPO"
+  ok "no legacy ~/.ai-config (correct)"
+fi
+
+# skills hub: ~/.claude/skills preferred; ~/.copilot/skills on copilot-only machines
+HUB=""
+if [ -d "$HOME/.claude" ]; then HUB="$HOME/.claude/skills"
+elif [ -d "$HOME/.copilot" ]; then HUB="$HOME/.copilot/skills"
 fi
 
 # codex (skip if codex isn't set up on this machine)
@@ -101,50 +124,59 @@ if [ -d "$HOME/.claude" ]; then
       ok "rules/ empty; no ~/.claude/rules/shared link (correct)"
     fi
   fi
+else
+  skip "~/.claude absent; skipping claude checks"
+fi
 
-  # claude skills: real dir of per-skill links
-  SKILLS_DIR="$HOME/.claude/skills"
-  if [ -L "$SKILLS_DIR" ]; then
+# skills hub: real dir of per-skill links
+if [ -n "$HUB" ]; then
+  if [ -L "$HUB" ]; then
     if [ "$FIX" = 1 ]; then
-      rm "$SKILLS_DIR" && mkdir "$SKILLS_DIR" && fixed "$SKILLS_DIR: legacy whole-dir symlink replaced with real directory"
+      rm "$HUB" && mkdir "$HUB" && fixed "$HUB: legacy whole-dir symlink replaced with real directory"
     else
-      fail "$SKILLS_DIR: legacy whole-dir symlink (run --fix)"
+      fail "$HUB: legacy whole-dir symlink (run --fix)"
     fi
-  elif [ ! -d "$SKILLS_DIR" ]; then
+  elif [ ! -d "$HUB" ]; then
     if [ "$FIX" = 1 ]; then
-      mkdir -p "$SKILLS_DIR" && fixed "$SKILLS_DIR created"
+      mkdir -p "$HUB" && fixed "$HUB created"
     else
-      fail "$SKILLS_DIR: missing"
+      fail "$HUB: missing"
     fi
   fi
-  if [ -d "$SKILLS_DIR" ] && [ ! -L "$SKILLS_DIR" ]; then
-    for tier in general personal; do
+  if [ -d "$HUB" ] && [ ! -L "$HUB" ]; then
+    TIERS="general"
+    [ "$PERSONAL" = 1 ] && TIERS="general personal"
+    for tier in $TIERS; do
       for skill in "$REPO/skills/$tier"/*/; do
         [ -d "$skill" ] || continue
-        check_link "$SKILLS_DIR/$(basename "$skill")" "$REPO/skills/$tier/$(basename "$skill")"
+        check_link "$HUB/$(basename "$skill")" "$REPO/skills/$tier/$(basename "$skill")"
       done
     done
-    for entry in "$SKILLS_DIR"/*; do
-      if [ -L "$entry" ] && [ ! -e "$entry" ]; then
-        if [ "$FIX" = 1 ]; then
-          rm "$entry" && fixed "removed dangling skill link $entry"
-        else
-          fail "$entry: dangling skill link -> $(readlink "$entry")"
-        fi
+    for entry in "$HUB"/*; do
+      [ -L "$entry" ] || continue
+      target=$(resolve "$entry")
+      if [ ! -e "$entry" ]; then
+        if [ "$FIX" = 1 ]; then rm "$entry" && fixed "removed dangling skill link $entry"
+        else fail "$entry: dangling skill link -> $(readlink "$entry")"; fi
+      elif [ "$PERSONAL" = 0 ] && [ "${target#"$REPO/skills/personal/"}" != "$target" ]; then
+        if [ "$FIX" = 1 ]; then rm "$entry" && fixed "removed personal skill link $entry (not a personal host)"
+        else fail "$entry: personal skill linked on non-personal host"; fi
       fi
     done
   fi
 
-  # agents surface
-  check_link "$HOME/.agents/skills" "$HOME/.claude/skills"
+  # agents-standard surface follows the hub
+  check_link "$HOME/.agents/skills" "$HUB"
 else
-  skip "~/.claude absent; skipping claude + agents checks"
+  skip "no ~/.claude or ~/.copilot; skipping skills hub"
 fi
 
-# copilot surface (kept in lockstep; skip if copilot isn't set up)
+# copilot surface (skip if copilot isn't set up)
 if [ -d "$HOME/.copilot" ]; then
   check_link "$HOME/.copilot/copilot-instructions.md" "$REPO/agents/general.md"
-  check_link "$HOME/.copilot/skills" "$HOME/.claude/skills"
+  if [ "$HUB" != "$HOME/.copilot/skills" ]; then
+    check_link "$HOME/.copilot/skills" "$HUB"
+  fi
 else
   skip "~/.copilot absent; skipping copilot links"
 fi

@@ -7,7 +7,7 @@
 # Why this script still exists:
 #   * The optional launchd timer (launchd/sh.user.ai-config-sync.plist, not
 #     installed by default) calls it by this name.
-#   * Remote invocation (`ssh host '~/.ai-config/bin/ai-config-sync'`) needs
+#   * Remote invocation (`ssh host '~/code/ai-sync/bin/ai-config-sync'`) needs
 #     the PATH fix below; a bare ai-sync call finds only system Python 3.9.
 #   * Sibling to ~/dotfiles/bin/dotfiles-sync — same shape, different repo.
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 # shebang picks up Python 3.14.
 PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-AI_CONFIG="${AI_CONFIG:-$HOME/.ai-config}"
+AI_CONFIG="${AI_CONFIG:-$HOME/code/ai-sync}"
 AI_SYNC="$AI_CONFIG/bin/ai-sync"
 
 if [[ ! -x "$AI_SYNC" ]]; then
