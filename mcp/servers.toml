@@ -24,3 +24,8 @@
 command     = "${AI_CONFIG}/bin/unifi-mcp-wrapper.sh"
 description = "UniFi network management — talks to the UCG Ultra console"
 secrets_env = "${AI_CONFIG}/secrets/unifi.env"
+
+[ynab]
+command     = "${AI_CONFIG}/bin/ynab-mcp-wrapper.sh"
+description = "YNAB (You Need A Budget) — budgets, accounts, transactions via the YNAB API"
+secrets_env = "${AI_CONFIG}/secrets/ynab.env"
