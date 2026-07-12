@@ -85,17 +85,21 @@ class Link:
 #     become DRIFT and need to be promoted manually to base or overlay.
 #   * Otherwise → symlink (v1 behaviour). Claude Code's writes flow straight
 #     into the canonical tracked file and you just commit them.
+# 2026-07 consolidation: ~/.claude/CLAUDE.md is now a REAL file containing
+# the @-import bridge ("@~/code/ai-sync/agents/general.md"), and skills are
+# assembled as per-skill symlinks in a real ~/.claude/skills directory
+# (mirrored by ~/.copilot/skills -> ~/.claude/skills and
+# ~/.agents/skills -> ~/.claude/skills). Those are owned and verified by
+# bin/ai-sync-doctor and MUST NOT be re-created as whole-dir/instruction
+# symlinks here.
 CLAUDE_LINKS: list[Link] = [
-    Link("instructions.md",       CLAUDE_HOME / "CLAUDE.md"),
-    Link("skills",                CLAUDE_HOME / "skills"),
     Link("bin",                   CLAUDE_HOME / "bin"),
     Link("secrets",               CLAUDE_HOME / "secrets"),
     Link("claude/settings.json",  CLAUDE_HOME / "settings.json"),
 ]
 
 COPILOT_LINKS: list[Link] = [
-    Link("instructions.md",         COPILOT_HOME / "copilot-instructions.md"),
-    Link("skills",                  COPILOT_HOME / "skills"),
+    Link("agents/general.md",       COPILOT_HOME / "copilot-instructions.md"),
     Link("bin",                     COPILOT_HOME / "bin"),
     Link("secrets",                 COPILOT_HOME / "secrets"),
     Link("mcp.json",                COPILOT_HOME / "mcp-config.json"),

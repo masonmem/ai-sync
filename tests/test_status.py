@@ -12,7 +12,7 @@ def test_status_after_apply_is_clean(fake_home, fake_claude, ai_sync):
 
 
 def test_status_detects_missing_link(fake_home, fake_claude, ai_sync):
-    # Don't apply — ~/.claude/CLAUDE.md doesn't exist.
+    # Don't apply — the managed links don't exist yet.
     r = ai_sync("status")
     assert r.returncode == 1
     assert "MISSING" in r.stdout
@@ -20,7 +20,7 @@ def test_status_detects_missing_link(fake_home, fake_claude, ai_sync):
 
 def test_status_detects_drifted_symlink(fake_home, fake_claude, ai_sync):
     ai_sync("apply", expect_success=True)
-    link = fake_home / ".claude" / "CLAUDE.md"
+    link = fake_home / ".copilot" / "copilot-instructions.md"
     link.unlink()
     # Point at a different (valid) target
     (fake_home / ".ai-config" / "wrong.md").write_text("nope")
