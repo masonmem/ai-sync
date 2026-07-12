@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# ai-sync-doctor — verify every symlink/bridge of the ai-sync fan-out.
+# Read-only. Exits nonzero listing every failure.
+#
+# Architecture verified here (2026-07 consolidation):
+#   ~/.codex/AGENTS.md                  -> <repo>/agents/general.md
+#   ~/.claude/CLAUDE.md                 =  real file, exactly "@~/code/ai-sync/agents/general.md"
+#   ~/.claude/rules/shared              -> <repo>/rules          (only if rules/ has content)
+#   ~/.claude/skills/<name>             -> <repo>/skills/{general,personal}/<name>  (per skill)
+#   ~/.agents/skills                    -> ~/.claude/skills
+#   ~/.copilot/copilot-instructions.md  -> <repo>/agents/general.md
+#   ~/.copilot/skills                   -> ~/.claude/skills
+#   ~/.ai-config                        -> <repo>                (compatibility)
+#
+# bin/ai-sync (Python) still owns: bin/secrets/settings links, MCP
+# registration, settings render/promote. It no longer manages CLAUDE.md
+# or skills links — those are this script's territory.
+
+set -u
+REPO="${AI_SYNC_REPO:-$HOME/code/ai-sync}"
+FAILS=0
+
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+fail() { printf '  \033[31m✗\033[0m %s\n' "$*"; FAILS=$((FAILS + 1)); }
+
+resolve() { readlink -f "$1" 2>/dev/null; }
+
+check_link() { # $1=link $2=expected target
+  local link=$1 want=$2 got
+  if [ ! -L "$link" ]; then
+    fail "$link: not a symlink"
+    return
+  fi
+  if [ ! -e "$link" ]; then
+    fail "$link: dangling -> $(readlink "$link")"
+    return
+  fi
+  got=$(resolve "$link")
+  if [ "$got" = "$(resolve "$want")" ]; then
+    ok "$link -> $want"
+  else
+    fail "$link -> $got (expected $want)"
+  fi
+}
+
+echo "ai-sync-doctor: repo=$REPO"
+
+[ -d "$REPO/agents" ] || fail "$REPO/agents missing — wrong repo path?"
+
+# compatibility link
+check_link "$HOME/.ai-config" "$REPO"
+
+# codex
+check_link "$HOME/.codex/AGENTS.md" "$REPO/agents/general.md"
+
+# claude: CLAUDE.md is a REAL file containing exactly the @-import line
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+EXPECT='@~/code/ai-sync/agents/general.md'
+if [ -L "$CLAUDE_MD" ]; then
+  fail "$CLAUDE_MD: is a symlink (must be a real file containing '$EXPECT')"
+elif [ ! -f "$CLAUDE_MD" ]; then
+  fail "$CLAUDE_MD: missing"
+elif [ "$(cat "$CLAUDE_MD")" = "$EXPECT" ]; then
+  ok "$CLAUDE_MD contains the @-import bridge"
+else
+  fail "$CLAUDE_MD: content differs from '$EXPECT'"
+fi
+
+# claude rules: link only when rules/ has real content
+if find "$REPO/rules" -type f ! -name '.gitkeep' 2>/dev/null | grep -q .; then
+  check_link "$HOME/.claude/rules/shared" "$REPO/rules"
+else
+  if [ -e "$HOME/.claude/rules/shared" ] || [ -L "$HOME/.claude/rules/shared" ]; then
+    fail "$HOME/.claude/rules/shared exists but $REPO/rules is empty"
+  else
+    ok "rules/ empty; no ~/.claude/rules/shared link (correct)"
+  fi
+fi
+
+# claude skills: one link per skill dir, both tiers
+SKILLS_DIR="$HOME/.claude/skills"
+if [ -L "$SKILLS_DIR" ]; then
+  fail "$SKILLS_DIR: is a symlink (must be a real directory of per-skill links)"
+elif [ ! -d "$SKILLS_DIR" ]; then
+  fail "$SKILLS_DIR: missing"
+else
+  for tier in general personal; do
+    for skill in "$REPO/skills/$tier"/*/; do
+      [ -d "$skill" ] || continue
+      name=$(basename "$skill")
+      check_link "$SKILLS_DIR/$name" "$REPO/skills/$tier/$name"
+    done
+  done
+  # dangling leftovers
+  for entry in "$SKILLS_DIR"/*; do
+    [ -L "$entry" ] && [ ! -e "$entry" ] && fail "$entry: dangling skill link -> $(readlink "$entry")"
+  done
+fi
+
+# agents surface
+check_link "$HOME/.agents/skills" "$HOME/.claude/skills"
+
+# copilot surface (extension beyond the core spec, kept in lockstep)
+check_link "$HOME/.copilot/copilot-instructions.md" "$REPO/agents/general.md"
+check_link "$HOME/.copilot/skills" "$HOME/.claude/skills"
+
+if [ "$FAILS" -gt 0 ]; then
+  echo "ai-sync-doctor: $FAILS failure(s)"
+  exit 1
+fi
+echo "ai-sync-doctor: all checks passed"
