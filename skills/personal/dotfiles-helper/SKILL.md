@@ -10,7 +10,7 @@ This skill captures the *house rules* for how @masonmem's machine environment is
 There are two repos in play:
 
 - **`~/dotfiles`** (`masonmem/dotfiles`) — machine env: Brewfile, shell config, editors, ssh template. Managed with GNU stow, `--no-folding` so machine-local overrides live alongside stowed files.
-- **`~/code/ai-sync`** (`masonmem/ai-config`) — shared AI brain consumed by **Claude Code** (via `~/.claude/`), **Copilot CLI** (via `~/.copilot/`), and **Codex** (via `~/.codex/AGENTS.md`). Holds global instructions (`agents/general.md`), skills (`skills/general/`, `skills/personal/`), MCP wrapper scripts, per-tool settings, and secrets. Plain clone (no stow); `~/.ai-config` is a compatibility symlink to it.
+- **`~/code/ai-sync`** (`masonmem/ai-sync`) — shared AI brain consumed by **Claude Code** (via `~/.claude/`), **Copilot CLI** (via `~/.copilot/`), and **Codex** (via `~/.codex/AGENTS.md`). Holds global instructions (`agents/general.md`), skills (`skills/general/`, `skills/personal/`), MCP wrapper scripts, per-tool settings, and secrets. Plain clone (no stow); `~/.ai-config` is a compatibility symlink to it.
 
 ## Golden rules
 

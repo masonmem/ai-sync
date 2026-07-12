@@ -6,7 +6,7 @@ description: "Map of @masonmem's repos and config surfaces. Use when deciding wh
 # Where things live
 
 - `~/dotfiles` — machine env (Brewfile, zsh, editors), GNU stow.
-- `~/code/ai-sync` (`masonmem/ai-config`) — shared AI brain (global
+- `~/code/ai-sync` (`masonmem/ai-sync`) — shared AI brain (global
   instructions in `agents/general.md`, skills, MCP wrappers, per-tool
   settings). `~/.ai-config` is a compatibility symlink to it. `~/.claude/`,
   `~/.copilot/`, and `~/.codex/` are thin tool-shaped surfaces whose

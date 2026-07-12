@@ -12,7 +12,7 @@ This skill captures @masonmem's homelab GitOps conventions. The promise: **anyth
 | Repo | Owns | NOT for |
 |---|---|---|
 | `masonmem/dotfiles` | Mac machine env (Brewfile, zsh, stow), Mac-local launchd agents | Anything on hyperion or solaris-the-Docker-host |
-| `masonmem/ai-config` (was `masonmem/copilot`) | Shared AI brain — skills, agents, MCP wrappers, instructions; consumed by both Copilot CLI (`~/.copilot/`) and Claude Code (`~/.claude/`) via symlinks into `~/.ai-config/` | Service deploys |
+| `masonmem/ai-sync` (was `masonmem/copilot`) | Shared AI brain — skills, agents, MCP wrappers, instructions; consumed by both Copilot CLI (`~/.copilot/`) and Claude Code (`~/.claude/`) via symlinks into `~/.ai-config/` | Service deploys |
 | **`masonmem/homelab`** | Compose stacks + non-secret config for hyperion + solaris, Komodo resources, age public keys | Mac client config, network design docs |
 | `masonmem/network` (at `~/code/network`) | Network design, UniFi/Cloudflare/NextDNS docs | Compose stacks (those moved to `homelab` during the migration) |
 

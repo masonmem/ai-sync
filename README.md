@@ -1,6 +1,6 @@
 # ~/.ai-config
 
-[![tests](https://github.com/masonmem/ai-config/actions/workflows/test.yml/badge.svg)](https://github.com/masonmem/ai-config/actions/workflows/test.yml)
+[![tests](https://github.com/masonmem/ai-sync/actions/workflows/test.yml/badge.svg)](https://github.com/masonmem/ai-sync/actions/workflows/test.yml)
 
 Personal AI brain — global instructions, custom skills, agent profiles, MCP wrapper scripts, and per-tool settings. Shared by **Claude Code** (via `~/.claude/`) and **Copilot CLI** (via `~/.copilot/`); designed to be reproducible across machines via [`bin/ai-sync`](bin/ai-sync).
 
@@ -52,7 +52,7 @@ Order matters: **dotfiles first** — `brew bundle` there provides Python 3.11+ 
 ```bash
 # 1. ~/dotfiles bootstrapped (brew bundle done — gives python 3.11+)
 # 2. Clone this repo
-git clone git@github.com:masonmem/ai-config.git ~/.ai-config
+git clone git@github.com:masonmem/ai-sync.git ~/.ai-config
 chmod +x ~/.ai-config/bin/ai-sync ~/.ai-config/bin/*.sh
 # 3. Apply (symlinks, MCP registration, mcp.json generation)
 ~/.ai-config/bin/ai-sync apply
@@ -73,7 +73,7 @@ chmod +x ~/.ai-config/bin/ai-sync ~/.ai-config/bin/*.sh
 # Run on the host whose ~/.copilot/.git/ is still a physical clone.
 # Idempotent — exits cleanly if already migrated.
 curl -fsSLo /tmp/migrate-from-copilot.sh \
-  https://raw.githubusercontent.com/masonmem/ai-config/main/bin/migrate-from-copilot.sh
+  https://raw.githubusercontent.com/masonmem/ai-sync/main/bin/migrate-from-copilot.sh
 bash /tmp/migrate-from-copilot.sh --dry   # preview
 bash /tmp/migrate-from-copilot.sh         # do it
 ~/.ai-config/bin/ai-sync apply
