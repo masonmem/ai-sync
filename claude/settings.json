@@ -30,9 +30,15 @@
   },
   "advisorModel": "opus",
   "theme": "dark-ansi",
+  "disableWorkflows": true,
   "statusLine": {
     "type": "command",
     "command": "bash ~/code/ai-sync/bin/statusline.sh"
   },
-  "skipAutoPermissionPrompt": true
+  "permissions": {
+    "defaultMode": "default",
+    "deny": [
+      "Workflow"
+    ]
+  }
 }

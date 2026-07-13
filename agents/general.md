@@ -27,3 +27,7 @@ Budget is precious:
 ## Non-interactive (`-p` / `--prompt`) sessions
 
 - Do the requested task, reply with the result, and stop. No speculative follow-up tool calls.
+
+## Expensive orchestration
+
+- Never launch a dynamic workflow or large multi-agent fan-out unless Mason explicitly requests that mechanism and confirms the proposed maximum agent count. Research requests alone do not authorize workflows; use direct search/fetch and a small bounded number of agents.
