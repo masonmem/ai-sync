@@ -113,6 +113,7 @@ Global rules (`agents/general.md` § Commits) apply. Additionally, for this terr
 
 - One concern per commit; scope encouraged (e.g. `feat(zsh): add pip alias`).
 - For changes that span both repos (e.g. install a tool *and* wire its MCP server), commit each repo separately with clear, parallel commit messages.
+- Once a requested change is verified and ready, stage only its relevant files, commit it, and push it to the current branch unless the user explicitly asks not to push. Do not leave completed changes only in the working tree.
 
 ## Related skills
 
