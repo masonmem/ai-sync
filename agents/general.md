@@ -24,6 +24,14 @@ Budget is precious:
 - Use Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, etc. Scope optional.
 - **Never** add a `Co-authored-by: Copilot` *or* `Co-authored-by: Claude` trailer. Mason treats commits as his own regardless of which assistant produced the diff.
 
+## Delivery workflow (PRs)
+
+- Ship every change as a PR — never commit to `main` directly. Branch → Conventional Commits → PR.
+- The PR description must stand alone: what changed and why, behavioral changes, and test evidence (commands run + results, not "tests pass"). Fill the repo's PR template if one exists.
+- Mason reviews and merges — never merge or self-approve. Address review with follow-up commits on the same branch; don't force-push once review has started.
+- Deployed repos are GitOps: merging to `main` is what ships (e.g. vision-utils, homelab). Read the repo's `AGENTS.md` for its pipeline before claiming anything is live.
+- Update in-repo docs in the same PR when behavior changes.
+
 ## Non-interactive (`-p` / `--prompt`) sessions
 
 - Do the requested task, reply with the result, and stop. No speculative follow-up tool calls.
