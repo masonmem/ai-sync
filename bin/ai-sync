@@ -68,6 +68,7 @@ AI_CONFIG = pathlib.Path(os.environ.get("AI_CONFIG", str(HOME / "code" / "ai-syn
 
 CLAUDE_HOME  = HOME / ".claude"
 COPILOT_HOME = HOME / ".copilot"
+CODEX_HOME   = pathlib.Path(os.environ.get("CODEX_HOME", str(HOME / ".codex")))
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,22 @@ def load_servers() -> dict[str, dict]:
         return {}
     with path.open("rb") as f:
         return tomllib.load(f)
+
+
+def load_codex_plugin_policy() -> dict[str, bool]:
+    """Load the optional Codex plugin enable/disable policy."""
+    path = AI_CONFIG / "codex" / "plugins.toml"
+    if not path.exists():
+        return {}
+    with path.open("rb") as f:
+        data = tomllib.load(f)
+    plugins = data.get("plugins", {})
+    if not isinstance(plugins, dict):
+        raise ValueError(f"{path}: [plugins] must be a table")
+    invalid = [name for name, enabled in plugins.items() if not isinstance(enabled, bool)]
+    if invalid:
+        raise ValueError(f"{path}: plugin values must be booleans: {', '.join(invalid)}")
+    return plugins
 
 
 def load_secrets_manifest() -> list[dict]:
@@ -501,6 +518,91 @@ def register_mcp_claude(servers: dict[str, dict]) -> bool:
     return ok
 
 
+def codex_installed() -> bool:
+    return shutil.which("codex") is not None
+
+
+def codex_mcp_entry(name: str) -> dict | None:
+    """Read one Codex MCP entry through the CLI, or None if missing."""
+    if not codex_installed():
+        return None
+    r = subprocess.run(
+        ["codex", "mcp", "get", name, "--json"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def codex_mcp_entry_matches(entry: dict | None, command: str, args: list[str]) -> bool:
+    if entry is None or entry.get("enabled") is False:
+        return False
+    transport = entry.get("transport", {})
+    return (
+        transport.get("type") == "stdio"
+        and transport.get("command") == command
+        and transport.get("args", []) == args
+    )
+
+
+def codex_mcp_matches(name: str, command: str, args: list[str]) -> bool:
+    return codex_mcp_entry_matches(codex_mcp_entry(name), command, args)
+
+
+def codex_mcp_add(name: str, command: str, args: list[str]) -> bool:
+    r = subprocess.run(
+        ["codex", "mcp", "add", name, "--", command, *args],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        err(f"codex mcp add {name} failed: {r.stderr.strip()}")
+        return False
+    return True
+
+
+def codex_mcp_remove(name: str) -> bool:
+    r = subprocess.run(
+        ["codex", "mcp", "remove", name],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        err(f"codex mcp remove {name} failed: {r.stderr.strip()}")
+        return False
+    return True
+
+
+def register_mcp_codex(servers: dict[str, dict]) -> bool:
+    """Ensure every host+Codex-selected MCP server matches servers.toml."""
+    if not codex_installed():
+        info("codex CLI not installed; skipping MCP registration")
+        return True
+    ok = True
+    for name, cfg in servers.items():
+        if not selected_for_host(cfg) or not selected_for_client(cfg, "codex"):
+            continue
+        command = expand(cfg["command"])
+        args = [expand(a) for a in cfg.get("args", [])]
+        entry = codex_mcp_entry(name)
+        if codex_mcp_entry_matches(entry, command, args):
+            info(f"mcp:codex:{name} already registered")
+            continue
+        if entry is not None:
+            info(f"mcp:codex:{name} registration drifted; replacing")
+            if not codex_mcp_remove(name):
+                ok = False
+                continue
+        if codex_mcp_add(name, command, args):
+            info(f"mcp:codex:{name} registered → {command}")
+        else:
+            ok = False
+    return ok
+
+
 def copilot_mcp_state(servers: dict[str, dict]) -> dict[str, bool]:
     """Inspect the existing Copilot mcp.json and report which canonical servers are present."""
     copilot_mcp = AI_CONFIG / "mcp.json"
@@ -550,6 +652,100 @@ def write_copilot_mcp_json(servers: dict[str, dict]) -> None:
         return
     path.write_text(rendered)
     info(f"wrote {path}")
+
+
+# ── Codex plugin policy ─────────────────────────────────────────────────────
+
+def render_codex_plugin_policy(config_text: str, policy: dict[str, bool]) -> str:
+    """Patch only managed plugin `enabled` fields in a Codex TOML config."""
+    try:
+        tomllib.loads(config_text)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"{CODEX_HOME / 'config.toml'}: invalid TOML ({e})") from e
+
+    rendered = config_text
+    for name, desired in sorted(policy.items()):
+        value = "true" if desired else "false"
+        header = f"[plugins.{json.dumps(name)}]"
+        match = re.search(rf"(?m)^{re.escape(header)}[ \t]*$", rendered)
+        if match is None:
+            if rendered and not rendered.endswith("\n"):
+                rendered += "\n"
+            if rendered and not rendered.endswith("\n\n"):
+                rendered += "\n"
+            rendered += f"{header}\nenabled = {value}\n"
+            continue
+
+        next_header = re.search(r"(?m)^\[", rendered[match.end():])
+        block_end = match.end() + next_header.start() if next_header else len(rendered)
+        block = rendered[match.end():block_end]
+        enabled = re.search(
+            r"(?m)^(enabled[ \t]*=[ \t]*)(true|false)([ \t]*(?:#.*)?)$",
+            block,
+        )
+        if enabled is None:
+            rendered = rendered[:match.end()] + f"\nenabled = {value}" + rendered[match.end():]
+            continue
+        start = match.end() + enabled.start(2)
+        end = match.end() + enabled.end(2)
+        rendered = rendered[:start] + value + rendered[end:]
+
+    return rendered
+
+
+def apply_codex_plugin_policy() -> bool:
+    """Reconcile managed Codex plugin states without replacing config.toml."""
+    try:
+        policy = load_codex_plugin_policy()
+    except (OSError, tomllib.TOMLDecodeError, ValueError) as e:
+        err(str(e))
+        return False
+    if not policy:
+        return True
+    config = CODEX_HOME / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    current = config.read_text() if config.exists() else ""
+    try:
+        rendered = render_codex_plugin_policy(current, policy)
+    except ValueError as e:
+        err(str(e))
+        return False
+    if rendered == current:
+        return True
+    config.write_text(rendered)
+    info(f"codex plugins reconciled → {config}")
+    return True
+
+
+def _codex_plugin_policy_checks() -> list[CheckResult]:
+    """Report whether Codex config matches codex/plugins.toml."""
+    policy_path = AI_CONFIG / "codex" / "plugins.toml"
+    if not policy_path.exists():
+        return []
+    try:
+        policy = load_codex_plugin_policy()
+    except (OSError, tomllib.TOMLDecodeError, ValueError) as e:
+        return [CheckResult("plugins", CROSS, f"{policy_path} INVALID: {e}", "Fix the TOML")]
+    config = CODEX_HOME / "config.toml"
+    if not config.exists():
+        return [CheckResult("plugins", CROSS, f"{config} MISSING", "ai-sync apply")]
+    try:
+        actual = tomllib.loads(config.read_text()).get("plugins", {})
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        return [CheckResult("plugins", CROSS, f"{config} INVALID: {e}", "Fix the TOML")]
+
+    rows: list[CheckResult] = []
+    for name, desired in sorted(policy.items()):
+        entry = actual.get(name, {}) if isinstance(actual, dict) else {}
+        if isinstance(entry, dict) and entry.get("enabled") is desired:
+            rows.append(CheckResult("plugins", CHECK, f"codex:{name} = {str(desired).lower()}", None))
+        else:
+            rows.append(CheckResult(
+                "plugins", CROSS,
+                f"codex:{name} DRIFTED (expected enabled = {str(desired).lower()})",
+                "ai-sync apply",
+            ))
+    return rows
 
 
 # ── status ───────────────────────────────────────────────────────────────────
@@ -687,7 +883,7 @@ def _link_check(link: Link) -> CheckResult:
 
 
 def _mcp_checks(name: str, cfg: dict, copilot_state: dict[str, bool]) -> list[CheckResult]:
-    """Return the three (or fewer) check rows for one MCP server entry."""
+    """Return client and secret check rows for one MCP server entry."""
     rows: list[CheckResult] = []
     if not selected_for_host(cfg):
         rows.append(CheckResult("mcp", CHECK, f"{name}  (skipped on host {hostname()})", None))
@@ -719,6 +915,23 @@ def _mcp_checks(name: str, cfg: dict, copilot_state: dict[str, bool]) -> list[Ch
         rows.append(CheckResult(
             "mcp", CROSS, f"{name} copilot:  NOT in mcp.json",
             "ai-sync apply  # regenerates mcp.json from servers.toml",
+        ))
+
+    # codex
+    if not codex_installed():
+        rows.append(CheckResult("mcp", CHECK, f"{name} codex:    (codex CLI not installed)", None))
+    elif not selected_for_client(cfg, "codex"):
+        rows.append(CheckResult("mcp", CHECK, f"{name} codex:    (skipped)", None))
+    elif codex_mcp_matches(
+        name,
+        expand(cfg["command"]),
+        [expand(a) for a in cfg.get("args", [])],
+    ):
+        rows.append(CheckResult("mcp", CHECK, f"{name} codex:    registered", None))
+    else:
+        rows.append(CheckResult(
+            "mcp", CROSS, f"{name} codex:    NOT REGISTERED OR DRIFTED",
+            "ai-sync apply",
         ))
 
     # secrets file
@@ -812,6 +1025,7 @@ def _all_checks() -> list[CheckResult]:
     copilot_state = copilot_mcp_state(servers)
     for name, cfg in servers.items():
         rows.extend(_mcp_checks(name, cfg, copilot_state))
+    rows.extend(_codex_plugin_policy_checks())
     rows.extend(_secrets_manifest_checks())
     rows.append(_fanout_check())
     return rows
@@ -849,6 +1063,13 @@ def status_cmd() -> int:
         print(f"  {DIM('(none declared)')}")
     for r in mcp_rows:
         print(f"  {r.mark} {r.description}")
+
+    plugin_rows = [r for r in rows if r.category == "plugins"]
+    if plugin_rows:
+        print()
+        print("client plugin policy (canonical: codex/plugins.toml):")
+        for r in plugin_rows:
+            print(f"  {r.mark} {r.description}")
 
     manifest_rows = [r for r in rows if r.category == "secrets-manifest"]
     if manifest_rows:
@@ -929,6 +1150,10 @@ def apply_cmd(pull: bool, force: bool = False) -> int:
     finally:
         _FORCE_APPLY = False
     if not register_mcp_claude(servers):
+        return 1
+    if not register_mcp_codex(servers):
+        return 1
+    if not apply_codex_plugin_policy():
         return 1
     info("apply complete")
     return 0

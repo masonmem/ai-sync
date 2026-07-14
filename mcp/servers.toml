@@ -18,7 +18,7 @@
 #   hosts         (optional) — list of short hostnames this server should be
 #                              registered on. Empty/missing = all hosts.
 #   clients       (optional) — list of clients to register with. Default = all
-#                              installed (currently "claude" and "copilot").
+#                              installed ("claude", "copilot", and "codex").
 
 [unifi]
 command     = "${AI_CONFIG}/bin/unifi-mcp-wrapper.sh"

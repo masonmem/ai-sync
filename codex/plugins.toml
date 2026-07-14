@@ -1,0 +1,7 @@
+# Codex plugins whose state is intentionally managed by `ai-sync apply`.
+# Keep the native/CLI surface when a plugin only adds a duplicate MCP server.
+
+[plugins]
+"github@claude-plugins-official" = false
+"playwright@claude-plugins-official" = false
+"security-guidance@claude-plugins-official" = false

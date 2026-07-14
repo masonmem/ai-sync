@@ -19,6 +19,8 @@ surfaces.
 - `skills/general/` is portable; `skills/personal/` is linked only on hosts
   represented under `hosts/`.
 - `mcp/servers.toml` is canonical; `mcp.json` is generated and gitignored.
+- `codex/plugins.toml` manages selected plugin states without owning Codex's
+  runtime-written `config.toml`.
 - Native client settings stay in `claude/` and `copilot/`; host overlays are
   deep-merged into real files and may accumulate runtime drift.
 - `bin/ai-sync-doctor` retains the Python-free fan-out implementation;

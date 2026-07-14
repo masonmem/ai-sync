@@ -28,6 +28,12 @@ Budget is precious:
 
 - Do the requested task, reply with the result, and stop. No speculative follow-up tool calls.
 
+## Tool selection
+
+- Prefer a mature authenticated CLI over an equivalent MCP surface; request narrow structured output when available.
+- Keep MCP only when it adds domain semantics, interactive state, or access a CLI/native tool does not provide.
+- For GitHub, use `gh` with `--json`/`--jq`/`--template` or `gh api`; do not use a GitHub MCP when `gh` covers the task.
+
 ## Expensive orchestration
 
 - Never launch a dynamic workflow or large multi-agent fan-out unless Mason explicitly requests that mechanism and confirms the proposed maximum agent count. Research requests alone do not authorize workflows; use direct search/fetch and a small bounded number of agents.

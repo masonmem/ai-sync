@@ -65,7 +65,7 @@ A single Python entry point (`bin/ai-sync`, stdlib-only) with seven subcommands.
 | Command | What it does | Exit code |
 |---|---|---|
 | `ai-sync status` | Reports complete cross-client fan-out, MCP registration, secret permissions, and render drift. Read-only. | `0` if clean, `1` if any drift detected. |
-| `ai-sync apply [--pull] [--force]` | Idempotent: repairs instruction/skill fan-out through `ai-sync-doctor --fix`, renders settings/MCP files, and registers missing Claude MCP servers. `--pull` fast-forwards first; `--force` discards rendered settings drift. | `0` on success. |
+| `ai-sync apply [--pull] [--force]` | Idempotent: repairs instruction/skill fan-out through `ai-sync-doctor --fix`, renders settings/MCP files, registers Claude/Codex MCP servers, and reconciles managed Codex plugin states. `--pull` fast-forwards first; `--force` discards rendered settings drift. | `0` on success. |
 | `ai-sync doctor` | Same checks as `status`, but each failure carries a one-line suggested fix command. | `0` if clean, `1` otherwise. |
 | `ai-sync diff [<target>]` | For render-mode targets (`claude`, `copilot`, or both), print a colorized unified diff between the actual rendered file and what `apply` would produce. Useful for inspecting tool writebacks before deciding where to promote them. | `0` if clean, `1` if any drift. |
 | `ai-sync promote --to <base\|overlay> [<target>]` | Top-level keys that differ between the rendered file and the expected render are merged into the chosen file (the shared base, or the per-host overlay), then `apply --force` re-renders. With `--to base`, warns about keys that the overlay still shadows. | `0` clean, `1` if any warning fired. |
@@ -79,9 +79,9 @@ filesystem implementation.
 
 ## MCP registry: `mcp/servers.toml`
 
-The single declaration site for every MCP server. `ai-sync apply` is the only
-thing that should write to either `~/.claude.json` (via `claude mcp add`) or
-`~/code/ai-sync/mcp.json` (regenerated each apply). Schema:
+The single declaration site for every MCP server. `ai-sync apply` reconciles
+Claude and Codex through their CLIs and regenerates Copilot's
+`~/code/ai-sync/mcp.json`. Schema:
 
 ```toml
 [<name>]
@@ -90,7 +90,7 @@ args        = ["..."]                                     # optional
 description = "..."                                       # optional, shown by `ai-sync mcp list`
 secrets_env = "${AI_CONFIG}/secrets/<name>.env"           # optional, status() warns on loose perms
 hosts       = ["navi", "solaris"]                         # optional, empty/missing = all
-clients     = ["claude", "copilot"]                       # optional, empty/missing = all
+clients     = ["claude", "copilot", "codex"]              # optional, empty/missing = all
 ```
 
 Placeholders `${AI_CONFIG}` and `${HOME}` are expanded by `ai-sync` itself, not
@@ -98,12 +98,14 @@ by the shell — so the file stays machine-portable.
 
 ### Adding a new MCP server
 
-1. If it needs secrets, write the wrapper at `bin/<name>-mcp-wrapper.sh`
+1. First prefer a mature authenticated CLI or native tool when it covers the
+   same work. Use MCP only when it adds a capability or domain surface.
+2. If it needs secrets, write the wrapper at `bin/<name>-mcp-wrapper.sh`
    following the pattern of `bin/unifi-mcp-wrapper.sh` (sources
    `secrets/<name>.env`, execs the server binary).
-2. Add a `[<name>]` table to `mcp/servers.toml`.
-3. Run `ai-sync apply`.
-4. Restart any running Claude Code session so it loads the new server.
+3. Add a `[<name>]` table to `mcp/servers.toml`.
+4. Run `ai-sync apply`.
+5. Restart running client sessions so they load the new server.
 
 That's the entire process. There is intentionally no JSON to edit twice and no
 hardcoded `claude mcp add` line in any bootstrap script.

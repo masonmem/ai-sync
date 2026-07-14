@@ -49,6 +49,8 @@ def fake_home(tmp_path, monkeypatch):
 
     (home / ".claude").mkdir()
     (home / ".copilot").mkdir()
+    (home / ".codex").mkdir()
+    (home / ".codex" / "config.toml").write_text("")
 
     # Seed a git repo so the dirty-tree check has something to compare against.
     env = os.environ | {
@@ -124,6 +126,65 @@ def parse_invocations(log_path):
     return [chunk.strip("\n").split("\n") for chunk in chunks]
 
 
+@pytest.fixture
+def fake_codex(tmp_path, monkeypatch):
+    """Install a stub `codex` binary that models MCP get/add/remove."""
+    bindir = tmp_path / "fake-codex-bin"
+    bindir.mkdir()
+    log = tmp_path / "codex.log"
+    state = tmp_path / "codex-state.json"
+    log.write_text("")
+    state.write_text("{}\n")
+
+    script = textwrap.dedent(f"""\
+        #!{sys.executable}
+        import json
+        import pathlib
+        import sys
+
+        log = pathlib.Path({str(log)!r})
+        state_path = pathlib.Path({str(state)!r})
+        argv = sys.argv[1:]
+        with log.open("a") as f:
+            for arg in argv:
+                f.write(arg + "\\n")
+            f.write("---\\n")
+
+        state = json.loads(state_path.read_text())
+        if argv[:2] == ["mcp", "get"]:
+            name = argv[2]
+            if name not in state:
+                raise SystemExit(1)
+            entry = state[name]
+            print(json.dumps({{
+                "name": name,
+                "enabled": True,
+                "transport": {{
+                    "type": "stdio",
+                    "command": entry["command"],
+                    "args": entry["args"],
+                }},
+            }}))
+            raise SystemExit(0)
+        if argv[:2] == ["mcp", "add"]:
+            name = argv[2]
+            separator = argv.index("--")
+            state[name] = {{"command": argv[separator + 1], "args": argv[separator + 2:]}}
+            state_path.write_text(json.dumps(state) + "\\n")
+            raise SystemExit(0)
+        if argv[:2] == ["mcp", "remove"]:
+            state.pop(argv[2], None)
+            state_path.write_text(json.dumps(state) + "\\n")
+            raise SystemExit(0)
+        raise SystemExit(0)
+    """)
+    (bindir / "codex").write_text(script)
+    (bindir / "codex").chmod(0o755)
+
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    return {"log": log, "state": state}
+
+
 def run_ai_sync(*args, expect_success=False):
     """Invoke bin/ai-sync as a subprocess. Returns CompletedProcess."""
     r = subprocess.run(
@@ -141,5 +202,5 @@ def run_ai_sync(*args, expect_success=False):
 
 
 @pytest.fixture
-def ai_sync():
+def ai_sync(fake_codex):
     return run_ai_sync

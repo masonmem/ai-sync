@@ -36,6 +36,7 @@ The full architecture, including the scope-by-path rule, the per-host overlay wr
 | `bin/`                  | ✅ | shared | `ai-sync` CLI, MCP/statusline wrapper scripts |
 | `mcp/servers.toml`      | ✅ | translated | **Single source of truth for MCP servers.** Read by `ai-sync apply`. |
 | `mcp.json`              | ❌ (gitignored) | generated | Copilot's mcp.json — regenerated each `ai-sync apply` from `mcp/servers.toml`; embeds machine-absolute paths, so it can't be tracked. Do not hand-edit. |
+| `codex/plugins.toml`    | ✅ | Codex only | Managed plugin enable/disable policy patched into Codex's runtime-owned `config.toml`. |
 | `copilot/settings.json` | ✅ | Copilot only | Copilot CLI native settings |
 | `claude/settings.json`  | ✅ | Claude Code only | Claude Code native settings (theme, plugins, statusLine, etc.) |
 | `docs/architecture.md`  | ✅ | docs | The "where does this go?" rule |
@@ -98,12 +99,13 @@ Caveat: `apply --pull` refuses on a dirty tree, so the timer silently no-ops (ch
 
 ## Adding a new MCP server
 
-1. If it needs secrets, write `bin/<name>-mcp-wrapper.sh` following [`bin/unifi-mcp-wrapper.sh`](bin/unifi-mcp-wrapper.sh)'s pattern.
-2. Add a `[<name>]` table to [`mcp/servers.toml`](mcp/servers.toml).
-3. `~/code/ai-sync/bin/ai-sync apply`
-4. Restart any running Claude Code session.
+1. Use a mature authenticated CLI/native tool instead when it covers the same work; add MCP only for a capability or domain surface it lacks.
+2. If MCP is justified and needs secrets, write `bin/<name>-mcp-wrapper.sh` following [`bin/unifi-mcp-wrapper.sh`](bin/unifi-mcp-wrapper.sh)'s pattern.
+3. Add a `[<name>]` table to [`mcp/servers.toml`](mcp/servers.toml).
+4. `~/code/ai-sync/bin/ai-sync apply`
+5. Restart running client sessions.
 
-The CLI handles `claude mcp add` and the Copilot `mcp.json` regeneration. There is no JSON to edit twice.
+The CLI handles Claude/Codex registration and Copilot `mcp.json` regeneration. There is no client config to edit separately.
 
 ## Per-host divergence (opt-in)
 

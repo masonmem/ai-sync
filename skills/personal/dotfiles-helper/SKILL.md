@@ -59,7 +59,12 @@ Commit the Brewfile change as `chore(brewfile): add <pkg>` or `feat(brewfile): a
 
 ## Adding an MCP server (user-global, in `~/code/ai-sync/`)
 
-`~/code/ai-sync/mcp/servers.toml` is the **single source of truth**. `ai-sync apply` reads it and registers each server with every installed client (Claude Code via `claude mcp add --scope user`; Copilot CLI by regenerating `~/code/ai-sync/mcp.json`). You never edit `mcp.json` or `~/.claude.json` by hand.
+First check whether a mature authenticated CLI or native client tool covers the
+same work. Prefer that smaller surface and add shared instructions if agents
+need routing guidance. Add MCP only for domain semantics, interactive state, or
+access the CLI/native tool cannot provide.
+
+`~/code/ai-sync/mcp/servers.toml` is the **single source of truth**. `ai-sync apply` reads it and registers each server with every installed client (Claude Code and Codex via their CLIs; Copilot CLI by regenerating `~/code/ai-sync/mcp.json`). You never edit generated MCP config by hand.
 
 Decision: does this MCP server need secrets (API keys, tokens)?
 
@@ -80,9 +85,9 @@ Decision: does this MCP server need secrets (API keys, tokens)?
 3. Document required env vars in the wrapper's header comment.
 4. The user creates `~/code/ai-sync/secrets/<name>.env` (gitignored) with `chmod 600`.
 5. Run `~/code/ai-sync/bin/ai-sync apply`.
-6. Verify: `~/code/ai-sync/bin/ai-sync status` should show `✓ registered` and `✓ present in mcp.json`. Restart any running Claude Code session so it loads the new server.
+6. Verify: `~/code/ai-sync/bin/ai-sync status` should show registered for Claude/Codex and present in Copilot's `mcp.json`. Restart running client sessions so they reload tools.
 
-`ai-sync` covers all the mechanical steps (claude mcp add, mcp.json regeneration, secret-perm check), so the only place a new server is *declared* is `servers.toml`.
+`ai-sync` covers all the mechanical steps (Claude/Codex registration, Copilot `mcp.json` regeneration, secret-perm check), so the only place a new server is *declared* is `servers.toml`.
 
 ## Adding a personal skill
 
