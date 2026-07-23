@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import socket
+
 
 def _is_link_to(link, target):
     return link.is_symlink() and link.resolve() == target.resolve()
@@ -24,7 +26,7 @@ def test_apply_creates_copilot_symlinks(fake_home, fake_claude, ai_sync):
     assert _is_link_to(fake_home / ".copilot" / "settings.json",           ai / "copilot" / "settings.json")
 
 
-def test_apply_creates_cross_client_skill_hub(fake_home, fake_claude, ai_sync):
+def test_apply_creates_independent_skill_hubs(fake_home, fake_claude, ai_sync):
     ai = fake_home / ".ai-config"
     skill = ai / "skills" / "general" / "portable-skill"
     skill.mkdir()
@@ -32,10 +34,67 @@ def test_apply_creates_cross_client_skill_hub(fake_home, fake_claude, ai_sync):
 
     ai_sync("apply", expect_success=True)
 
-    hub_skill = fake_home / ".claude" / "skills" / "portable-skill"
-    assert _is_link_to(hub_skill, skill)
-    assert _is_link_to(fake_home / ".copilot" / "skills", fake_home / ".claude" / "skills")
-    assert _is_link_to(fake_home / ".agents" / "skills", fake_home / ".claude" / "skills")
+    for hub in (
+        fake_home / ".claude" / "skills",
+        fake_home / ".copilot" / "skills",
+        fake_home / ".codex" / "skills",
+    ):
+        assert _is_link_to(hub / "portable-skill", skill)
+    assert not (fake_home / ".agents" / "skills").exists()
+
+
+def test_apply_removes_legacy_agents_skill_alias(fake_home, fake_claude, ai_sync):
+    legacy = fake_home / ".agents" / "skills"
+    legacy.parent.mkdir()
+    legacy.symlink_to(fake_home / ".claude" / "skills")
+
+    ai_sync("apply", expect_success=True)
+
+    assert not legacy.exists()
+
+
+def test_apply_creates_copilot_agent_and_hook_symlinks(
+    fake_home, fake_claude, ai_sync
+):
+    ai = fake_home / ".ai-config"
+    agent = ai / "agents" / "copilot" / "implementation-writer.agent.md"
+    hook = ai / "hooks" / "copilot" / "guard.json"
+    agent.parent.mkdir()
+    hook.parent.mkdir(parents=True)
+    agent.write_text("---\ndescription: Writes code\n---\n")
+    hook.write_text("{}\n")
+
+    ai_sync("apply", expect_success=True)
+
+    assert _is_link_to(
+        fake_home / ".copilot" / "agents" / agent.name,
+        agent,
+    )
+    assert _is_link_to(
+        fake_home / ".copilot" / "hooks" / hook.name,
+        hook,
+    )
+
+
+def test_general_scope_never_installs_personal_skills(
+    fake_home, fake_claude, ai_sync, monkeypatch
+):
+    ai = fake_home / ".ai-config"
+    host = socket.gethostname().split(".", 1)[0].lower()
+    (ai / "hosts" / host).mkdir(parents=True)
+    personal = ai / "skills" / "personal" / "home-only"
+    personal.mkdir()
+    (personal / "SKILL.md").write_text("---\nname: home-only\n---\n")
+    monkeypatch.setenv("AI_SYNC_SKILL_SCOPE", "general")
+
+    ai_sync("apply", expect_success=True)
+
+    for hub in (
+        fake_home / ".claude" / "skills",
+        fake_home / ".copilot" / "skills",
+        fake_home / ".codex" / "skills",
+    ):
+        assert not (hub / "home-only").exists()
 
 
 def test_apply_skips_tool_homes_that_dont_exist(fake_home, fake_claude, ai_sync):
