@@ -1,5 +1,10 @@
 {
-  "model": "claude-opus-4.8",
+  "model": "gpt-5.6-luna",
+  "includeCoAuthoredBy": false,
+  "memory": false,
+  "customAgents": {
+    "defaultLocalOnly": true
+  },
   "disabledSkills": [],
   "footer": {
     "showModelEffort": true,
