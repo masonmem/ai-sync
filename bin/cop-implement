@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Launch the invoke-only implementation writer with layered restrictions.
+
+set -euo pipefail
+
+provider="${1:-cloud}"
+case "$provider" in
+  cloud|laguna) shift || true ;;
+  *) provider="cloud" ;;
+esac
+
+export AI_SYNC_AGENT_BOUNDARY=writer
+launcher="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/cop-$provider"
+exec "$launcher" \
+  --agent implementation-writer \
+  --disallow-temp-dir \
+  '--deny-tool=shell(git push)' \
+  '--deny-tool=shell(git merge)' \
+  '--deny-tool=shell(git rebase)' \
+  '--deny-tool=shell(git reset)' \
+  '--deny-tool=shell(git clean)' \
+  '--deny-tool=shell(git switch)' \
+  '--deny-tool=shell(git checkout)' \
+  '--deny-tool=shell(git branch)' \
+  '--deny-tool=shell(git worktree)' \
+  '--deny-tool=shell(git update-ref)' \
+  '--deny-tool=shell(rm)' \
+  '--deny-tool=shell(rmdir)' \
+  '--deny-tool=shell(unlink)' \
+  "$@"
