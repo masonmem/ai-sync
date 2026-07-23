@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Start Copilot against the approved Laguna-compatible gateway.
+
+set -euo pipefail
+umask 077
+
+config="${AI_SYNC_LAGUNA_CONFIG:-$HOME/.config/ai-sync/laguna.env}"
+if [[ ! -f "$config" ]]; then
+  printf 'Laguna configuration missing: %s\n' "$config" >&2
+  printf 'Copy config/laguna.env.example there and fill only approved non-secret values.\n' >&2
+  exit 1
+fi
+
+if perm="$(stat -f '%Lp' "$config" 2>/dev/null)"; then
+  :
+else
+  perm="$(stat -c '%a' "$config")"
+fi
+if (( (8#$perm & 077) != 0 )); then
+  printf 'Laguna configuration must be user-only (chmod 600 %s).\n' "$config" >&2
+  exit 1
+fi
+
+unset COPILOT_PROVIDER_BASE_URL
+unset COPILOT_PROVIDER_TYPE
+unset COPILOT_PROVIDER_API_KEY
+unset COPILOT_PROVIDER_BEARER_TOKEN
+unset COPILOT_PROVIDER_WIRE_API
+unset COPILOT_PROVIDER_TRANSPORT
+unset COPILOT_PROVIDER_AZURE_API_VERSION
+unset COPILOT_PROVIDER_MODEL_ID
+unset COPILOT_PROVIDER_WIRE_MODEL
+unset COPILOT_PROVIDER_MAX_PROMPT_TOKENS
+unset COPILOT_PROVIDER_MAX_OUTPUT_TOKENS
+unset COPILOT_PROVIDER_HEADERS
+unset COPILOT_MODEL
+
+set -a
+# shellcheck disable=SC1090
+source "$config"
+set +a
+
+required=(
+  COPILOT_PROVIDER_BASE_URL
+  COPILOT_PROVIDER_TYPE
+  COPILOT_MODEL
+  AI_SYNC_LAGUNA_CREDENTIAL_KIND
+)
+for name in "${required[@]}"; do
+  if [[ -z "${!name:-}" ]]; then
+    printf 'Laguna configuration is missing %s (value not shown).\n' "$name" >&2
+    exit 1
+  fi
+done
+
+case "$COPILOT_PROVIDER_TYPE" in
+  openai|azure|anthropic) ;;
+  *)
+    printf 'Unsupported COPILOT_PROVIDER_TYPE in Laguna configuration.\n' >&2
+    exit 1
+    ;;
+esac
+
+service="${AI_SYNC_LAGUNA_KEYCHAIN_SERVICE:-ai-sync/copilot-laguna}"
+account="${AI_SYNC_LAGUNA_KEYCHAIN_ACCOUNT:-${USER:-laguna}}"
+if ! credential="$(security find-generic-password -a "$account" -s "$service" -w 2>/dev/null)"; then
+  printf 'Laguna credential not found in macOS Keychain (service/account names only): %s / %s\n' \
+    "$service" "$account" >&2
+  exit 1
+fi
+
+case "$AI_SYNC_LAGUNA_CREDENTIAL_KIND" in
+  bearer)
+    export COPILOT_PROVIDER_BEARER_TOKEN="$credential"
+    unset COPILOT_PROVIDER_API_KEY
+    ;;
+  api-key)
+    export COPILOT_PROVIDER_API_KEY="$credential"
+    unset COPILOT_PROVIDER_BEARER_TOKEN
+    ;;
+  *)
+    printf 'AI_SYNC_LAGUNA_CREDENTIAL_KIND must be bearer or api-key.\n' >&2
+    exit 1
+    ;;
+esac
+unset credential
+
+exec copilot \
+  --model "$COPILOT_MODEL" \
+  --secret-env-vars=COPILOT_PROVIDER_API_KEY,COPILOT_PROVIDER_BEARER_TOKEN \
+  --no-remote-export \
+  "$@"

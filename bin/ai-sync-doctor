@@ -8,13 +8,14 @@
 #   ~/.codex/AGENTS.md                  -> <repo>/agents/general.md   (skip if no ~/.codex)
 #   ~/.claude/CLAUDE.md                 =  real file, exactly "@~/code/ai-sync/agents/general.md"
 #   ~/.claude/rules/shared              -> <repo>/rules          (only if rules/ has content)
-#   <hub>/<name>                        -> <repo>/skills/{general,personal}/<name>  (per skill)
-#   ~/.agents/skills                    -> <hub>
+#   <client>/skills/<name>              -> <repo>/skills/{general,personal}/<name>
 #   ~/.copilot/copilot-instructions.md  -> <repo>/agents/general.md   (skip if no ~/.copilot)
-#   ~/.copilot/skills                   -> <hub>  (or IS the hub on copilot-only machines)
+#   ~/.copilot/agents/<name>             -> <repo>/agents/copilot/<name>
+#   ~/.copilot/hooks/<name>              -> <repo>/hooks/copilot/<name>
 #
-# The skills hub is ~/.claude/skills when Claude Code is installed, else
-# ~/.copilot/skills (copilot-only machines, e.g. work).
+# Each client has a real skills directory containing per-skill links. The
+# agents-standard ~/.agents/skills alias is deliberately absent because
+# Copilot discovers both it and ~/.copilot/skills, causing duplicate skills.
 #
 # Host scoping: skills/personal/* links are created ONLY on personal machines,
 # identified by a hosts/<short-hostname>/ directory in the repo (navi, solaris).
@@ -61,7 +62,75 @@ check_link() { # $1=link $2=expected target
   fi
 }
 
-if [ -d "$REPO/hosts/$HOSTN" ]; then PERSONAL=1; else PERSONAL=0; fi
+ensure_real_dir() { # $1=directory
+  local dir=$1
+  if [ -L "$dir" ]; then
+    if [ "$FIX" = 1 ]; then
+      rm "$dir" && mkdir -p "$dir" \
+        && fixed "$dir: whole-directory symlink replaced with real directory" \
+        || fail "$dir: could not replace symlink"
+    else
+      fail "$dir: whole-directory symlink (run --fix)"
+    fi
+  elif [ -d "$dir" ]; then
+    ok "$dir is a real directory"
+  elif [ -e "$dir" ]; then
+    fail "$dir: non-directory in the way (refusing to touch)"
+  elif [ "$FIX" = 1 ]; then
+    mkdir -p "$dir" && fixed "$dir created" || fail "$dir: could not create"
+  else
+    fail "$dir: missing"
+  fi
+}
+
+link_skills() { # $1=client skill directory
+  local hub=$1 tier skill entry target tiers
+  ensure_real_dir "$hub"
+  [ -d "$hub" ] && [ ! -L "$hub" ] || return
+
+  tiers="general"
+  [ "$PERSONAL" = 1 ] && tiers="general personal"
+  for tier in $tiers; do
+    for skill in "$REPO/skills/$tier"/*/; do
+      [ -f "$skill/SKILL.md" ] || continue
+      check_link "$hub/$(basename "$skill")" "$skill"
+    done
+  done
+  for entry in "$hub"/*; do
+    [ -L "$entry" ] || continue
+    target=$(resolve "$entry")
+    if [ ! -e "$entry" ]; then
+      if [ "$FIX" = 1 ]; then rm "$entry" && fixed "removed dangling skill link $entry"
+      else fail "$entry: dangling skill link -> $(readlink "$entry")"; fi
+    elif [ "$PERSONAL" = 0 ] && [ "${target#"$REPO/skills/personal/"}" != "$target" ]; then
+      if [ "$FIX" = 1 ]; then rm "$entry" && fixed "removed personal skill link $entry (not a personal host)"
+      else fail "$entry: personal skill linked on non-personal host"; fi
+    fi
+  done
+}
+
+link_files() { # $1=source directory $2=destination directory
+  local source=$1 destination=$2 file
+  [ -d "$source" ] || return
+  ensure_real_dir "$destination"
+  [ -d "$destination" ] && [ ! -L "$destination" ] || return
+  for file in "$source"/*; do
+    [ -f "$file" ] || continue
+    check_link "$destination/$(basename "$file")" "$file"
+  done
+}
+
+case "${AI_SYNC_SKILL_SCOPE:-auto}" in
+  general) PERSONAL=0 ;;
+  personal) PERSONAL=1 ;;
+  auto)
+    if [ -d "$REPO/hosts/$HOSTN" ]; then PERSONAL=1; else PERSONAL=0; fi
+    ;;
+  *)
+    fail "AI_SYNC_SKILL_SCOPE must be auto, general, or personal"
+    PERSONAL=0
+    ;;
+esac
 
 echo "ai-sync-doctor: repo=$REPO host=$HOSTN personal=$([ $PERSONAL = 1 ] && echo yes || echo no)$([ "$FIX" = 1 ] && echo ' (--fix)')"
 
@@ -84,15 +153,10 @@ else
   ok "no legacy ~/.ai-config (correct)"
 fi
 
-# skills hub: ~/.claude/skills preferred; ~/.copilot/skills on copilot-only machines
-HUB=""
-if [ -d "$HOME/.claude" ]; then HUB="$HOME/.claude/skills"
-elif [ -d "$HOME/.copilot" ]; then HUB="$HOME/.copilot/skills"
-fi
-
 # codex (skip if codex isn't set up on this machine)
 if [ -d "$HOME/.codex" ]; then
   check_link "$HOME/.codex/AGENTS.md" "$REPO/agents/general.md"
+  link_skills "$HOME/.codex/skills"
 else
   skip "~/.codex absent; skipping codex link"
 fi
@@ -128,59 +192,39 @@ if [ -d "$HOME/.claude" ]; then
       ok "rules/ empty; no ~/.claude/rules/shared link (correct)"
     fi
   fi
+  link_skills "$HOME/.claude/skills"
 else
   skip "~/.claude absent; skipping claude checks"
 fi
 
-# skills hub: real dir of per-skill links
-if [ -n "$HUB" ]; then
-  if [ -L "$HUB" ]; then
-    if [ "$FIX" = 1 ]; then
-      rm "$HUB" && mkdir "$HUB" && fixed "$HUB: legacy whole-dir symlink replaced with real directory"
-    else
-      fail "$HUB: legacy whole-dir symlink (run --fix)"
-    fi
-  elif [ ! -d "$HUB" ]; then
-    if [ "$FIX" = 1 ]; then
-      mkdir -p "$HUB" && fixed "$HUB created"
-    else
-      fail "$HUB: missing"
-    fi
-  fi
-  if [ -d "$HUB" ] && [ ! -L "$HUB" ]; then
-    TIERS="general"
-    [ "$PERSONAL" = 1 ] && TIERS="general personal"
-    for tier in $TIERS; do
-      for skill in "$REPO/skills/$tier"/*/; do
-        [ -d "$skill" ] || continue
-        check_link "$HUB/$(basename "$skill")" "$REPO/skills/$tier/$(basename "$skill")"
-      done
-    done
-    for entry in "$HUB"/*; do
-      [ -L "$entry" ] || continue
-      target=$(resolve "$entry")
-      if [ ! -e "$entry" ]; then
-        if [ "$FIX" = 1 ]; then rm "$entry" && fixed "removed dangling skill link $entry"
-        else fail "$entry: dangling skill link -> $(readlink "$entry")"; fi
-      elif [ "$PERSONAL" = 0 ] && [ "${target#"$REPO/skills/personal/"}" != "$target" ]; then
-        if [ "$FIX" = 1 ]; then rm "$entry" && fixed "removed personal skill link $entry (not a personal host)"
-        else fail "$entry: personal skill linked on non-personal host"; fi
+# Remove only the legacy alias this repository used to create. A real
+# ~/.agents/skills directory is not ours to delete, but is an additional
+# Copilot discovery root and therefore a health failure.
+AGENTS_SKILLS="$HOME/.agents/skills"
+if [ -L "$AGENTS_SKILLS" ]; then
+  legacy_target=$(resolve "$AGENTS_SKILLS")
+  case "$legacy_target" in
+    "$HOME/.claude/skills"|"$HOME/.copilot/skills")
+      if [ "$FIX" = 1 ]; then
+        rm "$AGENTS_SKILLS" && fixed "removed duplicate legacy $AGENTS_SKILLS alias"
+      else
+        fail "$AGENTS_SKILLS duplicates a client skill root (run --fix)"
       fi
-    done
-  fi
-
-  # agents-standard surface follows the hub
-  check_link "$HOME/.agents/skills" "$HUB"
+      ;;
+    *) fail "$AGENTS_SKILLS: unexpected symlink target (refusing to touch)" ;;
+  esac
+elif [ -e "$AGENTS_SKILLS" ]; then
+  fail "$AGENTS_SKILLS is an additional Copilot discovery root; reconcile it manually"
 else
-  skip "no ~/.claude or ~/.copilot; skipping skills hub"
+  ok "no duplicate ~/.agents/skills discovery root"
 fi
 
 # copilot surface (skip if copilot isn't set up)
 if [ -d "$HOME/.copilot" ]; then
   check_link "$HOME/.copilot/copilot-instructions.md" "$REPO/agents/general.md"
-  if [ "$HUB" != "$HOME/.copilot/skills" ]; then
-    check_link "$HOME/.copilot/skills" "$HUB"
-  fi
+  link_skills "$HOME/.copilot/skills"
+  link_files "$REPO/agents/copilot" "$HOME/.copilot/agents"
+  link_files "$REPO/hooks/copilot" "$HOME/.copilot/hooks"
 else
   skip "~/.copilot absent; skipping copilot links"
 fi

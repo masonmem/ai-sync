@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Conservative personal Git worktree helper."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+import os
+import re
+import subprocess
+import sys
+
+
+MINIMUM_GIT = (2, 48, 0)
+
+
+def invoke(
+    *args: str,
+    cwd: Path | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if check and result.returncode:
+        raise SystemExit(result.stderr.strip() or result.stdout.strip())
+    return result
+
+
+def git_version() -> tuple[int, ...]:
+    output = invoke("--version").stdout
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", output)
+    return tuple(int(value or 0) for value in match.groups()) if match else ()
+
+
+def context() -> tuple[Path, Path]:
+    current = Path.cwd()
+    common_text = invoke(
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+        cwd=current,
+    ).stdout.strip()
+    common = Path(common_text).resolve()
+    if common.name != ".git":
+        raise SystemExit("wt requires a non-bare repository with a canonical .git directory")
+    return current, common.parent
+
+
+def slug(branch: str) -> str:
+    value = branch.replace("/", "--")
+    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(".-")
+    if not value:
+        raise SystemExit("branch name does not produce a usable filesystem slug")
+    return value
+
+
+@dataclass(frozen=True)
+class Worktree:
+    path: Path
+    branch: str | None
+    bare: bool = False
+
+
+def worktrees(canonical: Path) -> list[Worktree]:
+    output = invoke("worktree", "list", "--porcelain", cwd=canonical).stdout
+    found: list[Worktree] = []
+    for block in output.strip().split("\n\n"):
+        fields: dict[str, str] = {}
+        flags: set[str] = set()
+        for line in block.splitlines():
+            key, _, value = line.partition(" ")
+            if value:
+                fields[key] = value
+            else:
+                flags.add(key)
+        if "worktree" not in fields:
+            continue
+        branch_ref = fields.get("branch")
+        branch = (
+            branch_ref.removeprefix("refs/heads/")
+            if branch_ref and branch_ref.startswith("refs/heads/")
+            else None
+        )
+        found.append(
+            Worktree(
+                path=Path(fields["worktree"]).resolve(),
+                branch=branch,
+                bare="bare" in flags,
+            )
+        )
+    return found
+
+
+def worktree_for_branch(canonical: Path, branch: str) -> Worktree:
+    matches = [item for item in worktrees(canonical) if item.branch == branch]
+    if not matches:
+        raise SystemExit(f"branch is not checked out in a worktree: {branch}")
+    if len(matches) > 1:
+        raise SystemExit(f"ambiguous worktree records for branch: {branch}")
+    return matches[0]
+
+
+def local_branches(canonical: Path) -> list[str]:
+    output = invoke(
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads/",
+        cwd=canonical,
+    ).stdout
+    return output.splitlines()
+
+
+def new(canonical: Path, branch: str, base: str) -> None:
+    current = git_version()
+    if not current or current < MINIMUM_GIT:
+        required = ".".join(map(str, MINIMUM_GIT))
+        raise SystemExit(f"Git {required}+ is required for --relative-paths")
+    if invoke("check-ref-format", "--branch", branch, check=False).returncode:
+        raise SystemExit(f"invalid branch name: {branch}")
+    if invoke(
+        "show-ref",
+        "--verify",
+        "--quiet",
+        f"refs/heads/{branch}",
+        cwd=canonical,
+        check=False,
+    ).returncode == 0:
+        raise SystemExit(f"branch already exists: {branch}")
+
+    wanted_slug = slug(branch)
+    for existing in local_branches(canonical):
+        if existing != branch and slug(existing).casefold() == wanted_slug.casefold():
+            raise SystemExit(
+                f"slug collision: {branch} and {existing} both map to {wanted_slug}"
+            )
+    destination = canonical / ".worktrees" / wanted_slug
+    if destination.exists():
+        raise SystemExit(f"worktree path already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    result = invoke(
+        "worktree",
+        "add",
+        "--relative-paths",
+        "-b",
+        branch,
+        str(destination),
+        base,
+        cwd=canonical,
+        check=False,
+    )
+    if result.returncode:
+        raise SystemExit(result.stderr.strip() or result.stdout.strip())
+    print(destination)
+
+
+def list_worktrees(canonical: Path) -> None:
+    for item in worktrees(canonical):
+        label = item.branch or "(detached)"
+        print(f"{label}\t{item.path}")
+
+
+def show_path(canonical: Path, branch: str) -> None:
+    print(worktree_for_branch(canonical, branch).path)
+
+
+def remove(canonical: Path, branch: str) -> None:
+    item = worktree_for_branch(canonical, branch)
+    if item.path == canonical:
+        raise SystemExit("refusing to remove the canonical checkout")
+    status = invoke(
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        cwd=item.path,
+    ).stdout
+    if status:
+        raise SystemExit(f"worktree is dirty; refusing removal:\n{status.rstrip()}")
+    result = invoke(
+        "worktree",
+        "remove",
+        str(item.path),
+        cwd=canonical,
+        check=False,
+    )
+    if result.returncode:
+        raise SystemExit(result.stderr.strip() or result.stdout.strip())
+
+
+def delete_branch(canonical: Path, branch: str) -> None:
+    result = invoke("branch", "-d", "--", branch, cwd=canonical, check=False)
+    if result.returncode:
+        raise SystemExit(result.stderr.strip() or result.stdout.strip())
+
+
+def prune(canonical: Path) -> None:
+    dry = invoke(
+        "worktree",
+        "prune",
+        "--dry-run",
+        "--verbose",
+        cwd=canonical,
+    ).stdout
+    print("Prune dry run:")
+    print(dry.rstrip() if dry else "(nothing to prune)")
+    confirmed = os.environ.get("WT_PRUNE_CONFIRM") == "yes"
+    if not confirmed and sys.stdin.isatty():
+        confirmed = input("Type 'prune' to continue: ").strip() == "prune"
+    if not confirmed:
+        raise SystemExit("prune cancelled")
+    result = invoke("worktree", "prune", "--verbose", cwd=canonical, check=False)
+    if result.returncode:
+        raise SystemExit(result.stderr.strip() or result.stdout.strip())
+    if result.stdout:
+        print(result.stdout.rstrip())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="wt")
+    commands = parser.add_subparsers(dest="command", required=True)
+    add = commands.add_parser("new")
+    add.add_argument("branch")
+    add.add_argument("base", nargs="?", default="HEAD")
+    commands.add_parser("ls")
+    path = commands.add_parser("path")
+    path.add_argument("branch")
+    remove_parser = commands.add_parser("rm")
+    remove_parser.add_argument("branch")
+    delete = commands.add_parser("delete-branch")
+    delete.add_argument("branch")
+    commands.add_parser("prune")
+    args = parser.parse_args()
+
+    _, canonical = context()
+    if args.command == "new":
+        new(canonical, args.branch, args.base)
+    elif args.command == "ls":
+        list_worktrees(canonical)
+    elif args.command == "path":
+        show_path(canonical, args.branch)
+    elif args.command == "rm":
+        remove(canonical, args.branch)
+    elif args.command == "delete-branch":
+        delete_branch(canonical, args.branch)
+    elif args.command == "prune":
+        prune(canonical)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
