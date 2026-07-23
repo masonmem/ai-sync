@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Start a hosted Copilot session with every BYOK provider variable cleared.
+
+set -euo pipefail
+umask 077
+
+unset COPILOT_PROVIDER_BASE_URL
+unset COPILOT_PROVIDER_TYPE
+unset COPILOT_PROVIDER_API_KEY
+unset COPILOT_PROVIDER_BEARER_TOKEN
+unset COPILOT_PROVIDER_WIRE_API
+unset COPILOT_PROVIDER_MODEL_ID
+unset COPILOT_PROVIDER_WIRE_MODEL
+unset COPILOT_PROVIDER_MAX_PROMPT_TOKENS
+unset COPILOT_PROVIDER_MAX_OUTPUT_TOKENS
+unset COPILOT_MODEL
+
+model="${COP_CLOUD_MODEL:-gpt-5.6-luna}"
+credits="${COPILOT_MAX_AI_CREDITS:-100}"
+exec copilot \
+  --model "$model" \
+  --max-ai-credits "$credits" \
+  --no-remote-export \
+  "$@"
