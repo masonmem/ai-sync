@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Restrict only Copilot CLI-managed runtime state; never follow curated links.
+
+set -euo pipefail
+
+copilot_home="${COPILOT_HOME:-$HOME/.copilot}"
+if [[ -L "$copilot_home" ]]; then
+  printf 'refusing: %s must be a real directory, not a symlink\n' "$copilot_home" >&2
+  exit 1
+fi
+[[ -d "$copilot_home" ]] || exit 0
+chmod 700 "$copilot_home"
+
+runtime_names=(
+  history
+  logs
+  session-state
+  sessions
+  command-history-state.json
+  config.json
+  permissions.json
+  session-store.db
+  session-store.db-shm
+  session-store.db-wal
+  trusted-folders.json
+)
+
+for name in "${runtime_names[@]}"; do
+  path="$copilot_home/$name"
+  [[ -e "$path" && ! -L "$path" ]] || continue
+  if [[ -d "$path" ]]; then
+    find -P "$path" -type d -exec chmod 700 {} +
+    find -P "$path" -type f -exec chmod 600 {} +
+  elif [[ -f "$path" ]]; then
+    chmod 600 "$path"
+  fi
+done
+
+printf 'Copilot runtime permissions restricted under %s\n' "$copilot_home"

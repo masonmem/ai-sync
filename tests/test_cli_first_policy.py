@@ -18,6 +18,23 @@ def test_global_instructions_prefer_structured_cli_over_equivalent_mcp():
     assert "gh" in instructions
 
 
+def test_global_instructions_enforce_personal_worktree_and_artifact_boundaries():
+    instructions = (ROOT / "agents" / "general.md").read_text().lower()
+
+    for requirement in (
+        "repository root",
+        "current worktree",
+        "canonical checkout",
+        "generated code",
+        "regression test",
+        "smallest relevant validation",
+        "data classification",
+        ".local/share/ai-sync/projects",
+        "do not create ai workflow artifacts",
+    ):
+        assert requirement in instructions
+
+
 def test_redundant_claude_plugins_are_disabled():
     settings = json.loads((ROOT / "claude" / "settings.json").read_text())
     enabled = settings["enabledPlugins"]
