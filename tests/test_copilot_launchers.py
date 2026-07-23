@@ -26,6 +26,14 @@ def fake_commands(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
                 "COPILOT_PROVIDER_TYPE",
                 "COPILOT_PROVIDER_API_KEY",
                 "COPILOT_PROVIDER_BEARER_TOKEN",
+                "COPILOT_PROVIDER_WIRE_API",
+                "COPILOT_PROVIDER_TRANSPORT",
+                "COPILOT_PROVIDER_AZURE_API_VERSION",
+                "COPILOT_PROVIDER_MODEL_ID",
+                "COPILOT_PROVIDER_WIRE_MODEL",
+                "COPILOT_PROVIDER_MAX_PROMPT_TOKENS",
+                "COPILOT_PROVIDER_MAX_OUTPUT_TOKENS",
+                "COPILOT_PROVIDER_HEADERS",
                 "COPILOT_MODEL",
             ]
             data = {
@@ -51,6 +59,14 @@ def test_cop_cloud_clears_inherited_byok_state(tmp_path):
         "COPILOT_PROVIDER_BASE_URL": "https://wrong.invalid",
         "COPILOT_PROVIDER_TYPE": "openai",
         "COPILOT_PROVIDER_API_KEY": "wrong-secret",
+        "COPILOT_PROVIDER_WIRE_API": "responses",
+        "COPILOT_PROVIDER_TRANSPORT": "websockets",
+        "COPILOT_PROVIDER_AZURE_API_VERSION": "2024-10-21",
+        "COPILOT_PROVIDER_MODEL_ID": "wrong-base-model",
+        "COPILOT_PROVIDER_WIRE_MODEL": "wrong-wire-model",
+        "COPILOT_PROVIDER_MAX_PROMPT_TOKENS": "1234",
+        "COPILOT_PROVIDER_MAX_OUTPUT_TOKENS": "5678",
+        "COPILOT_PROVIDER_HEADERS": "X-Leaked-Header: wrong",
         "COPILOT_MODEL": "wrong-model",
     }
 
@@ -93,6 +109,9 @@ def test_cop_laguna_loads_nonsecret_config_and_keychain_credential(tmp_path):
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "COPILOT_TEST_LOG": str(log),
         "USER": "tester",
+        "COPILOT_PROVIDER_TRANSPORT": "websockets",
+        "COPILOT_PROVIDER_AZURE_API_VERSION": "2024-10-21",
+        "COPILOT_PROVIDER_HEADERS": "X-Leaked-Header: wrong",
     }
 
     subprocess.run([str(ROOT / "bin" / "cop-laguna")], check=True, env=env)
