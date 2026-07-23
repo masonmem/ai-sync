@@ -77,16 +77,25 @@ explicitly for architecture or difficult debugging.
 
 ## Laguna BYOK
 
-Exact gateway URL, provider type, credential kind, and Laguna S 2.1 model
-identifier were not present in the approved local environment and were not
-guessed. `~/.config/ai-sync/laguna.env` and its Keychain item therefore remain
-unconfigured.
+The approved work-machine gateway model identifier is `laguna-s-2-1`. The
+gateway URL and credential are configured locally and are deliberately not
+recorded here.
 
-Pending smoke tests: streaming, file read/edit, shell invocation, targeted
-test, web fetch, `/research`, GitHub access, required MCPs, tool-call argument
-correctness, session-state location, and proof of zero hosted-credit use.
-`/fleet` is intentionally excluded. Subagent provider inheritance is
-unverified.
+A non-sensitive disposable-repository smoke test verified streaming, file
+reading, two small file creations, shell execution, executable permission
+changes, and a passing regression test. Tool arguments were correct for those
+operations. One shell command (`git log`) exited 128 because the scratch
+repository had an unborn `main` branch; this was benign but is still counted as
+a tool-call failure.
+
+Copilot CLI 1.0.73 does not recognize `laguna-s-2-1` in its built-in catalog,
+so exact `COPILOT_PROVIDER_MAX_PROMPT_TOKENS` and
+`COPILOT_PROVIDER_MAX_OUTPUT_TOKENS` values remain required from the approved
+gateway or VS Code model configuration. Do not guess them.
+
+Pending smoke tests: web fetch, `/research`, GitHub access, required MCPs,
+session-state location, and proof of zero hosted-credit use. `/fleet` is
+intentionally excluded. Subagent provider inheritance is unverified.
 
 A 30-credit-capped, non-sensitive hosted writer test was attempted in a
 disposable Git repository. Copilot returned “Access denied by policy settings”
