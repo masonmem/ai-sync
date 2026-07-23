@@ -1,0 +1,10 @@
+[mattpocock]
+repository = "https://github.com/mattpocock/skills"
+revision = "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+revision_date = "2026-07-21T11:28:51+01:00"
+installed_at = "2026-07-23T19:42:49Z"
+installer = "skills@1.5.20"
+installer_agent = "github-copilot"
+installer_mode = "copy"
+catalog = "promoted engineering and productivity skills"
+skill_count = 22
