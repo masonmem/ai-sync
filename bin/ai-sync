@@ -71,6 +71,11 @@ COPILOT_HOME = HOME / ".copilot"
 CODEX_HOME   = pathlib.Path(os.environ.get("CODEX_HOME", str(HOME / ".codex")))
 
 
+def work_profile() -> bool:
+    """Whether the caller requested the conservative work-machine profile."""
+    return os.environ.get("AI_SYNC_PROFILE") == "work"
+
+
 @dataclass(frozen=True)
 class Link:
     target_rel: str        # relative to AI_CONFIG
@@ -1015,6 +1020,9 @@ def _secrets_manifest_checks() -> list[CheckResult]:
 
 def _all_checks() -> list[CheckResult]:
     """Gather every check. Shared between status and doctor."""
+    if work_profile():
+        return [_fanout_check()]
+
     rows: list[CheckResult] = []
     if CLAUDE_HOME.is_dir():
         rows.extend(_link_check(link) for link in CLAUDE_LINKS)
@@ -1130,9 +1138,15 @@ def apply_cmd(pull: bool, force: bool = False) -> int:
         return 1
     chmod_executables()
     servers = load_servers()
-    # Write the Copilot mcp.json BEFORE re-linking so a fresh machine doesn't
-    # briefly see a dangling symlink.
-    write_copilot_mcp_json(servers)
+    if work_profile():
+        info(
+            "work profile: preserving machine-local client settings, MCP config, "
+            "secrets, and plugin policy"
+        )
+    else:
+        # Write the Copilot mcp.json BEFORE re-linking so a fresh machine doesn't
+        # briefly see a dangling symlink.
+        write_copilot_mcp_json(servers)
     fanout = _fanout_doctor(fix=True)
     if fanout.returncode != 0:
         if fanout.stdout:
@@ -1141,6 +1155,9 @@ def apply_cmd(pull: bool, force: bool = False) -> int:
             print(fanout.stderr, end="", file=sys.stderr)
         err("cross-client fan-out repair failed")
         return 1
+    if work_profile():
+        info("apply complete")
+        return 0
     global _FORCE_APPLY
     _FORCE_APPLY = force
     try:
