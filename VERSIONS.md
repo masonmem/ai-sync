@@ -88,6 +88,12 @@ correctness, session-state location, and proof of zero hosted-credit use.
 `/fleet` is intentionally excluded. Subagent provider inheritance is
 unverified.
 
+A 30-credit-capped, non-sensitive hosted writer test was attempted in a
+disposable Git repository. Copilot returned “Access denied by policy settings”
+before a model turn or tool call, so actual custom-agent enforcement and credit
+consumption could not be observed on this account. Repeat that test with the
+approved work account.
+
 No approved record was available for work-data classifications, retention,
 training use, tenancy/isolation, endpoint operator, log access,
 vulnerability-data handling, organization BYOK policy, or permitted MCP/network
