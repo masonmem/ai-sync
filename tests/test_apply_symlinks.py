@@ -97,6 +97,44 @@ def test_general_scope_never_installs_personal_skills(
         assert not (hub / "home-only").exists()
 
 
+def test_work_profile_preserves_machine_local_client_configuration(
+    fake_home, fake_claude, ai_sync, monkeypatch
+):
+    ai = fake_home / ".ai-config"
+    copilot = fake_home / ".copilot"
+    claude = fake_home / ".claude"
+    codex = fake_home / ".codex"
+    local_files = {
+        copilot / "mcp-config.json": '{"mcpServers":{"work":{}}}\n',
+        copilot / "settings.json": '{"model":"work-model"}\n',
+        claude / "settings.json": '{"workSetting":true}\n',
+        codex / "config.toml": 'model = "work-model"\n',
+    }
+    for path, content in local_files.items():
+        path.write_text(content)
+    (ai / "codex").mkdir()
+    (ai / "codex" / "plugins.toml").write_text(
+        '[plugins]\n"github@claude-plugins-official" = false\n'
+    )
+    monkeypatch.setenv("AI_SYNC_PROFILE", "work")
+    monkeypatch.setenv("AI_SYNC_SKILL_SCOPE", "general")
+
+    ai_sync("apply", expect_success=True)
+    status = ai_sync("status")
+
+    assert status.returncode == 0, status.stdout + status.stderr
+    for path, content in local_files.items():
+        assert path.read_text() == content
+        assert not path.is_symlink()
+    for path in (
+        copilot / "bin",
+        copilot / "secrets",
+        claude / "bin",
+        claude / "secrets",
+    ):
+        assert not path.exists()
+
+
 def test_apply_skips_tool_homes_that_dont_exist(fake_home, fake_claude, ai_sync):
     # Remove ~/.copilot before apply; the script should silently skip it.
     import shutil

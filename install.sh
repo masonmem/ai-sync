@@ -6,12 +6,16 @@ set -euo pipefail
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 mode="host"
 action="install"
+profile="${AI_SYNC_PROFILE:-personal}"
 skill_scope="${AI_SYNC_SKILL_SCOPE:-auto}"
 
 while (($#)); do
   case "$1" in
     --container) mode="container" ;;
-    --work) skill_scope="general" ;;
+    --work)
+      profile="work"
+      skill_scope="general"
+      ;;
     --check) action="check" ;;
     -h|--help)
       printf 'usage: ./install.sh [--work] [--container] [--check]\n'
@@ -25,6 +29,7 @@ while (($#)); do
   shift
 done
 
+export AI_SYNC_PROFILE="$profile"
 export AI_SYNC_SKILL_SCOPE="$skill_scope"
 
 run_checks() {
@@ -39,7 +44,7 @@ if [[ "$action" == "check" ]]; then
   exit
 fi
 
-printf 'Installing personal AI configuration (%s mode) from %s\n' "$mode" "$repo"
+printf 'Installing %s AI configuration (%s mode) from %s\n' "$profile" "$mode" "$repo"
 AI_CONFIG="$repo" "$repo/bin/ai-sync" apply --force
 "$repo/bin/ai-runtime-permissions"
 run_checks
