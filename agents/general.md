@@ -24,6 +24,22 @@ Budget is precious:
 - Use Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, etc. Scope optional.
 - **Never** add a `Co-authored-by: Copilot` *or* `Co-authored-by: Claude` trailer. Mason treats commits as his own regardless of which assistant produced the diff.
 
+## Repository boundaries
+
+- Before editing, identify the repository root, branch, current worktree, and status. Work only inside that worktree.
+- Never modify the canonical checkout during implementation.
+- Do not push, merge, rebase, reset, clean, switch branches, create or delete branches, update refs, or manipulate worktrees unless explicitly requested.
+- Never hand-edit generated code. Use the repository's existing commands and conventions.
+- Do not create AI workflow artifacts—context files, ADRs, specifications, ticket drafts, handoffs, or research notes—inside a work repository unless explicitly authorized.
+- Keep personal project state under `~/.local/share/ai-sync/projects/<stable-repository-key>/` by default.
+
+## Validation and data
+
+- For defects, reproduce the problem and add a regression test when feasible.
+- Run the smallest relevant validation first, then the repository's existing normal verification commands.
+- Report exact validation commands, results, and unresolved risks.
+- Send source, vulnerability findings, and other work information only to providers approved for that data classification. Follow provider, MCP, and network-destination restrictions.
+
 ## Non-interactive (`-p` / `--prompt`) sessions
 
 - Do the requested task, reply with the result, and stop. No speculative follow-up tool calls.

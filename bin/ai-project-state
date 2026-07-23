@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Print a privacy-preserving external state path for a Git repository."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import re
+import subprocess
+from urllib.parse import urlsplit
+
+
+def git(repo: Path, *args: str, required: bool = True) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+    )
+    if required and result.returncode:
+        raise SystemExit(result.stderr.strip() or "not a Git worktree")
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def safe_remote(value: str, repo: Path) -> str:
+    if "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "unknown").lower()
+        path = parsed.path.removesuffix(".git").strip("/")
+        return f"{host}/{path}"
+    scp = re.fullmatch(r"(?:[^@/\s]+@)?([^:/\s]+):(.+)", value)
+    if scp:
+        return f"{scp.group(1).lower()}/{scp.group(2).removesuffix('.git')}"
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = repo / path
+    return f"local/{path.resolve(strict=False)}"
+
+
+def canonical_root(repo: Path) -> tuple[Path, Path]:
+    common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    if common.name == ".git":
+        return common.parent.resolve(), common.resolve()
+    top = Path(git(repo, "rev-parse", "--show-toplevel")).resolve()
+    return top, common.resolve()
+
+
+def project_key(repo: Path) -> str:
+    canonical, common = canonical_root(repo)
+    remote = git(canonical, "config", "--get", "remote.origin.url", required=False)
+    identity = safe_remote(remote, canonical) if remote else f"gitdir/{common}"
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:12]
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", canonical.name).strip(".-")
+    return f"{slug or 'repository'}--{digest}"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ensure", action="store_true")
+    parser.add_argument("repository", nargs="?", default=".")
+    args = parser.parse_args()
+
+    repo = Path(args.repository).expanduser().resolve()
+    state_root = Path(
+        os.environ.get(
+            "AI_SYNC_STATE_ROOT",
+            "~/.local/share/ai-sync/projects",
+        )
+    ).expanduser()
+    destination = state_root / project_key(repo)
+    if args.ensure:
+        state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        state_root.chmod(0o700)
+        destination.mkdir(exist_ok=True, mode=0o700)
+        destination.chmod(0o700)
+    print(destination)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

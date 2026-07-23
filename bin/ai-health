@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Read-only health checks for the personal AI environment."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+
+
+REQUIRED_SKILLS = {
+    "ask-matt",
+    "code-review",
+    "domain-modeling",
+    "grill-me",
+    "grill-with-docs",
+    "grilling",
+    "handoff",
+    "implement",
+    "research",
+    "tdd",
+    "to-spec",
+    "to-tickets",
+}
+REQUIRED_AGENTS = {
+    "implementation-writer.agent.md",
+    "ui-code-review-agent.agent.md",
+}
+RUNTIME_PARTS = {
+    "history",
+    "logs",
+    "session-state",
+    "sessions",
+}
+RUNTIME_FILES = {
+    "auth.json",
+    "command-history-state.json",
+    "config.json",
+    "permissions.json",
+    "session-store.db",
+    "session-store.db-shm",
+    "session-store.db-wal",
+    "trusted-folders.json",
+}
+COPILOT_RUNTIME_ROOTS = (
+    "history",
+    "logs",
+    "session-state",
+    "sessions",
+    "command-history-state.json",
+    "config.json",
+    "permissions.json",
+    "session-store.db",
+    "session-store.db-shm",
+    "session-store.db-wal",
+    "trusted-folders.json",
+)
+
+
+class Report:
+    def __init__(self) -> None:
+        self.errors = 0
+        self.warnings = 0
+
+    def ok(self, message: str) -> None:
+        print(f"OK    {message}")
+
+    def warn(self, message: str) -> None:
+        self.warnings += 1
+        print(f"WARN  {message}")
+
+    def error(self, message: str) -> None:
+        self.errors += 1
+        print(f"ERROR {message}")
+
+
+def command(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+
+
+def tracked_runtime(repo: Path) -> list[str]:
+    result = command("git", "ls-files", cwd=repo)
+    if result.returncode:
+        return []
+    bad: list[str] = []
+    for relative in result.stdout.splitlines():
+        path = Path(relative)
+        parts = set(path.parts)
+        if parts & RUNTIME_PARTS or path.name in RUNTIME_FILES or path.suffix == ".log":
+            bad.append(relative)
+    return bad
+
+
+def check_repo(report: Report, repo: Path) -> None:
+    bad = tracked_runtime(repo)
+    if bad:
+        report.error(
+            "tracked Copilot runtime state: " + ", ".join(sorted(bad)[:8])
+        )
+    else:
+        report.ok("no tracked Copilot runtime, log, history, or auth state")
+
+    missing_skills = sorted(
+        name for name in REQUIRED_SKILLS if not (repo / "skills" / "general" / name / "SKILL.md").is_file()
+    )
+    if missing_skills:
+        report.error("missing required global skills: " + ", ".join(missing_skills))
+    else:
+        report.ok(f"required upstream skills present ({len(REQUIRED_SKILLS)})")
+
+    missing_agents = sorted(
+        name for name in REQUIRED_AGENTS if not (repo / "agents" / "copilot" / name).is_file()
+    )
+    if missing_agents:
+        report.error("missing required Copilot agents: " + ", ".join(missing_agents))
+    else:
+        report.ok("writer and invoke-only reviewer agents present")
+
+
+def unsafe_runtime_paths(home: Path) -> list[Path]:
+    copilot = home / ".copilot"
+    unsafe: list[Path] = []
+    if copilot.exists() and not copilot.is_symlink():
+        if stat.S_IMODE(copilot.stat().st_mode) & 0o077:
+            unsafe.append(copilot)
+    for name in COPILOT_RUNTIME_ROOTS:
+        root = copilot / name
+        if root.is_symlink() or not root.exists():
+            continue
+        paths = [root]
+        if root.is_dir():
+            paths.extend(root.rglob("*"))
+        for path in paths:
+            if path.is_symlink():
+                continue
+            try:
+                if stat.S_IMODE(path.stat().st_mode) & 0o077:
+                    unsafe.append(path)
+            except FileNotFoundError:
+                continue
+    return unsafe
+
+
+def check_permissions(report: Report, home: Path) -> None:
+    unsafe = unsafe_runtime_paths(home)
+    if unsafe:
+        sample = ", ".join(str(path) for path in unsafe[:5])
+        report.error(f"unsafe Copilot runtime permissions ({len(unsafe)}): {sample}")
+    else:
+        report.ok("Copilot home and runtime state are user-only")
+
+
+def version_tuple(text: str) -> tuple[int, ...]:
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", text)
+    return tuple(int(value or 0) for value in match.groups()) if match else ()
+
+
+def check_tools(report: Report, repo: Path) -> None:
+    requirements = {
+        "git": (2, 48, 0),
+        "copilot": (1, 0, 73),
+    }
+    for tool, minimum in requirements.items():
+        path = shutil.which(tool)
+        if not path:
+            report.error(f"{tool} is unavailable")
+            continue
+        result = command(tool, "--version")
+        current = version_tuple(result.stdout + result.stderr)
+        if not current or current < minimum:
+            report.error(
+                f"{tool} version unsupported: observed {current or 'unknown'}, "
+                f"need {'.'.join(map(str, minimum))}+"
+            )
+        else:
+            report.ok(f"{tool} {'.'.join(map(str, current))}")
+
+    for tool in ("gh", "node", "python3", "tmux", "zsh"):
+        if shutil.which(tool):
+            report.ok(f"{tool} available")
+        else:
+            report.error(f"{tool} is unavailable")
+    for helper in ("cop-cloud", "cop-laguna", "wt"):
+        if shutil.which(helper):
+            report.ok(f"{helper} available")
+        elif (repo / "bin" / helper).is_file():
+            report.warn(f"{helper} is installed but current shell PATH has not reloaded")
+        else:
+            report.error(f"{helper} is unavailable on PATH")
+    if shutil.which("devcontainer"):
+        report.ok("devcontainer CLI available on PATH")
+    else:
+        report.warn("devcontainer CLI is not on PATH; VS Code's bundled CLI may still be usable")
+
+
+def parse_env_keys(path: Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    keys: set[str] = set()
+    for line in path.read_text(errors="replace").splitlines():
+        match = re.match(r"\s*(?:export\s+)?([A-Z][A-Z0-9_]*)=", line)
+        if match:
+            keys.add(match.group(1))
+    return keys
+
+
+def check_laguna(report: Report, home: Path) -> None:
+    config = home / ".config" / "ai-sync" / "laguna.env"
+    keys = parse_env_keys(config)
+    required = {
+        "AI_SYNC_LAGUNA_CREDENTIAL_KIND",
+        "COPILOT_PROVIDER_BASE_URL",
+        "COPILOT_PROVIDER_TYPE",
+        "COPILOT_MODEL",
+    }
+    missing = sorted(required - keys)
+    if missing:
+        report.warn(
+            "Laguna BYOK configuration pending; missing variable names: "
+            + ", ".join(missing)
+        )
+    else:
+        report.ok("Laguna provider URL, type, and model variable names configured")
+    if "COPILOT_PROVIDER_API_KEY" in keys or "COPILOT_PROVIDER_BEARER_TOKEN" in keys:
+        report.error("Laguna credential must not be stored in laguna.env; use Keychain")
+    else:
+        report.ok("no Laguna credential stored in the local provider config")
+
+
+def check_container(report: Report, repo: Path) -> None:
+    if os.environ.get("REMOTE_CONTAINERS") or Path("/.dockerenv").exists():
+        report.warn("running in a container; compare this Git version with VERSIONS.md")
+    elif not (repo / ".container-versions").exists():
+        report.warn("container versions remain unverified; Docker/dev-container is unavailable")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument("--home", type=Path, default=Path.home())
+    parser.add_argument("--repo-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--permissions-only", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    report = Report()
+
+    if args.permissions_only:
+        check_permissions(report, args.home)
+    elif args.repo_only:
+        check_repo(report, args.repo)
+    else:
+        check_repo(report, args.repo)
+        check_permissions(report, args.home)
+        check_tools(report, args.repo)
+        check_laguna(report, args.home)
+        check_container(report, args.repo)
+
+    print(f"health: {report.errors} error(s), {report.warnings} warning(s)")
+    return 1 if report.errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
