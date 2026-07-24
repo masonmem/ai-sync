@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import socket
 
 
@@ -41,6 +43,43 @@ def test_apply_creates_independent_skill_hubs(fake_home, fake_claude, ai_sync):
     ):
         assert _is_link_to(hub / "portable-skill", skill)
     assert not (fake_home / ".agents" / "skills").exists()
+
+
+def test_skill_links_are_home_relative_and_survive_a_mirrored_container_home(
+    fake_home, fake_claude, ai_sync, tmp_path
+):
+    ai = fake_home / ".ai-config"
+    skill = ai / "skills" / "general" / "portable-skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(
+        "---\nname: portable-skill\ndescription: test\n---\n"
+    )
+
+    ai_sync("apply", expect_success=True)
+
+    host_link = fake_home / ".copilot" / "skills" / "portable-skill"
+    raw_target = os.readlink(host_link)
+    assert not Path(raw_target).is_absolute()
+
+    container_home = tmp_path / "container-home"
+    container_skill = (
+        container_home
+        / ".ai-config"
+        / "skills"
+        / "general"
+        / "portable-skill"
+    )
+    container_skill.mkdir(parents=True)
+    (container_skill / "SKILL.md").write_text(
+        "---\nname: portable-skill\ndescription: test\n---\n"
+    )
+    container_link = (
+        container_home / ".copilot" / "skills" / "portable-skill"
+    )
+    container_link.parent.mkdir(parents=True)
+    container_link.symlink_to(raw_target)
+
+    assert (container_link / "SKILL.md").is_file()
 
 
 def test_apply_removes_legacy_agents_skill_alias(fake_home, fake_claude, ai_sync):
@@ -145,6 +184,26 @@ def test_apply_skips_tool_homes_that_dont_exist(fake_home, fake_claude, ai_sync)
     assert (fake_home / ".claude" / "bin").is_symlink()
 
 
+def test_apply_fans_out_codex_after_plugin_policy_creates_its_home(
+    fake_home, fake_claude, ai_sync
+):
+    import shutil
+
+    ai = fake_home / ".ai-config"
+    shutil.rmtree(fake_home / ".codex")
+    (ai / "codex").mkdir()
+    (ai / "codex" / "plugins.toml").write_text(
+        '[plugins]\n"github@claude-plugins-official" = false\n'
+    )
+
+    ai_sync("apply", expect_success=True)
+
+    assert _is_link_to(
+        fake_home / ".codex" / "AGENTS.md",
+        ai / "agents" / "general.md",
+    )
+
+
 def test_apply_idempotent(fake_home, fake_claude, ai_sync):
     """Two consecutive applies produce the same end state and don't churn symlinks."""
     ai_sync("apply", expect_success=True)
@@ -171,6 +230,38 @@ def test_apply_replaces_drifted_symlink(fake_home, fake_claude, ai_sync):
     ai_sync("apply", expect_success=True)
 
     assert link.resolve() == (ai / "agents" / "general.md").resolve()
+
+
+def test_apply_rewrites_correct_absolute_skill_link_as_relative(
+    fake_home, fake_claude, ai_sync
+):
+    ai = fake_home / ".ai-config"
+    skill = ai / "skills" / "general" / "portable-skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(
+        "---\nname: portable-skill\ndescription: test\n---\n"
+    )
+    link = fake_home / ".copilot" / "skills" / "portable-skill"
+    link.parent.mkdir()
+    link.symlink_to(skill)
+
+    ai_sync("apply", expect_success=True)
+
+    assert link.resolve() == skill.resolve()
+    assert not Path(os.readlink(link)).is_absolute()
+
+
+def test_apply_rewrites_correct_absolute_managed_link_as_relative(
+    fake_home, fake_claude, ai_sync
+):
+    ai = fake_home / ".ai-config"
+    link = fake_home / ".copilot" / "bin"
+    link.symlink_to(ai / "bin")
+
+    ai_sync("apply", expect_success=True)
+
+    assert link.resolve() == (ai / "bin").resolve()
+    assert not Path(os.readlink(link)).is_absolute()
 
 
 def test_apply_refuses_to_clobber_physical_file(fake_home, fake_claude, ai_sync):

@@ -57,8 +57,12 @@ devcontainer exec --workspace-folder <canonical-path> \
   zsh -lc 'cd .worktrees/<slug> && cop-implement cloud'
 ```
 
-After cloning `ai-sync` inside a work container, run
-`./install.sh --work --container`. No team-owned `devcontainer.json` is needed.
+Clone `ai-sync` at `~/code/ai-sync` inside a work container, then run
+`./install.sh --work --container`. The matching home-relative path keeps the
+mounted `~/.copilot` skill links valid on both host and container. Verify with
+`test -r ~/.copilot/skills/ask-matt/SKILL.md`; link names from `ls` alone do not
+prove that skill bodies are readable. No team-owned `devcontainer.json` is
+needed.
 
 ## Model and cost routing
 
