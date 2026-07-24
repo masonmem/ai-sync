@@ -242,15 +242,16 @@ def relink_one(link: Link) -> tuple[str, str]:
         return ("target-missing", str(target))
 
     path = link.link_path
+    relative_target = os.path.relpath(target, start=path.parent)
     if path.is_symlink():
         try:
             current = path.resolve(strict=False)
         except OSError:
             current = None
-        if current == target.resolve():
+        if current == target.resolve() and not path.readlink().is_absolute():
             return ("ok", "")
         path.unlink()
-        path.symlink_to(target)
+        path.symlink_to(relative_target)
         return ("updated", "")
 
     if path.exists():
@@ -258,7 +259,7 @@ def relink_one(link: Link) -> tuple[str, str]:
         return ("blocked-by-existing", str(path))
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.symlink_to(target)
+    path.symlink_to(relative_target)
     return ("created", "")
 
 
