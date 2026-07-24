@@ -1148,6 +1148,10 @@ def apply_cmd(pull: bool, force: bool = False) -> int:
         # Write the Copilot mcp.json BEFORE re-linking so a fresh machine doesn't
         # briefly see a dangling symlink.
         write_copilot_mcp_json(servers)
+        # Plugin policy can create ~/.codex on a new machine. Apply it before
+        # fan-out so the same run also installs Codex instructions and skills.
+        if not apply_codex_plugin_policy():
+            return 1
     fanout = _fanout_doctor(fix=True)
     if fanout.returncode != 0:
         if fanout.stdout:
@@ -1169,8 +1173,6 @@ def apply_cmd(pull: bool, force: bool = False) -> int:
     if not register_mcp_claude(servers):
         return 1
     if not register_mcp_codex(servers):
-        return 1
-    if not apply_codex_plugin_policy():
         return 1
     info("apply complete")
     return 0

@@ -184,6 +184,26 @@ def test_apply_skips_tool_homes_that_dont_exist(fake_home, fake_claude, ai_sync)
     assert (fake_home / ".claude" / "bin").is_symlink()
 
 
+def test_apply_fans_out_codex_after_plugin_policy_creates_its_home(
+    fake_home, fake_claude, ai_sync
+):
+    import shutil
+
+    ai = fake_home / ".ai-config"
+    shutil.rmtree(fake_home / ".codex")
+    (ai / "codex").mkdir()
+    (ai / "codex" / "plugins.toml").write_text(
+        '[plugins]\n"github@claude-plugins-official" = false\n'
+    )
+
+    ai_sync("apply", expect_success=True)
+
+    assert _is_link_to(
+        fake_home / ".codex" / "AGENTS.md",
+        ai / "agents" / "general.md",
+    )
+
+
 def test_apply_idempotent(fake_home, fake_claude, ai_sync):
     """Two consecutive applies produce the same end state and don't churn symlinks."""
     ai_sync("apply", expect_success=True)
