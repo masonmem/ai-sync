@@ -34,17 +34,17 @@ If the change is "thing X is running on hyperion or solaris," it's in `homelab`.
 | **New ollama model** | `homelab/solaris/ollama/modelfiles/<name>.Modelfile` + `apply.sh` entry + `solaris/litellm/config.yaml` entry + `dotfiles/ollama/.config/opencode/opencode.jsonc` entry | Run apply.sh on solaris, restart litellm |
 | UniFi / network change | `network` repo at `~/code/network` (docs) + UniFi UI (live state via `unifi` MCP) | — |
 | **Caddy reverse-proxy entry** | `homelab/hyperion/infra/Caddyfile` | Push → Caddy reloads |
-| **Image version bump (any image)** | Renovate PR; `control-plane`-labeled PRs for Komodo Core/Periphery, FerretDB, Postgres | Merge → Komodo redeploys |
+| **Image version bump** | Leaf apps: nothing — rolling tags + Komodo `auto_update` redeploy automatically. Pinned set (Komodo Core/Periphery, FerretDB, Postgres, Caddy, first-party): hand-edit the `tag@sha256` pin (see `homelab/docs/updates.md`) | Auto, or push → Komodo redeploys |
 
 **Cloud/BYOK provider keys: non-goal.** The LLM platform is local-only since 2026-06-11 — no `cloud/*` model entries, no provider keys in Periphery secrets. Do not re-add them. See `homelab/docs/llm-platform.md` § "Cloud providers — not used".
 
 ## Hard rules
 
-1. **No `:latest` image tags, ever.** Everything is pinned `vX.Y.Z@sha256:...`; the control plane bumps in lockstep in a `control-plane`-labeled PR.
+1. **The pinned set stays `vX.Y.Z@sha256:...`; leaf apps ride rolling tags.** Pinned = Komodo Core/Periphery (bumped in lockstep, one commit), FerretDB + all Postgres, Caddy, first-party `lines`/`parallax-web`, parallax's redis, money's build-only base. Everything else uses a rolling tag and updates via Komodo `auto_update` — see `homelab/docs/updates.md`.
 2. **No plaintext secrets in git.** All secrets are Komodo Periphery `[secrets]` blocks in each host's `periphery.config.toml`. The canonical index is `komodo/resources/secrets-inventory.toml` — **always update it in the same PR** as the `[[NAME]]` reference or the `validate-stacks` CI job fails. Prefer `scripts/periphery-secrets.py {pull,edit,push,check} <host>` over raw ssh+vi. Mechanics: `komodo-ops` skill + `docs/security.md`.
 3. **Secret rotation needs a redeploy, and the key must appear in the stack's `environment` block.** Editing `periphery.config.toml` alone changes nothing (container keeps old env); a key in `[secrets]` that isn't in the consuming stack's `environment = """…"""` block in `komodo/resources/*-stacks.toml` is silently absent. Rotate → `komodo.py deploy <stack>`.
 4. **Secrets embedded in URLs (DATABASE_URL, AMQP/Redis URIs) must be URL-safe.** Generate with `openssl rand -hex 24`, never `-base64` (a `/` or `+` inside `postgres://user:pass@host` crash-loops the consumer). Postgres only honors `POSTGRES_PASSWORD` at first init — rotating after the data dir exists requires `ALTER USER` or a fresh data dir.
-5. **No Watchtower on Komodo-managed stacks.** Renovate is the bump mechanism.
+5. **No side-channel updaters (Watchtower, Dockhand, Renovate — all retired).** Komodo is the only thing that pulls and redeploys: per-stack `auto_update = true` for leaf stacks, git commits for the pinned set. Never re-add a dependency bot or a socket-level auto-updater.
 6. **No SSH-and-hand-edit on hyperion/solaris** for anything that should be reproducible. Emergency-only; if you used it, fold the change back into git the same day.
 7. **Don't touch Caddy or `monitor` without an escape hatch.** They're the front door and the observatory.
 8. **Config changes flow through GitOps automatically.** The `GitOps Auto-Deploy` Komodo procedure (5-min poll) syncs, diffs each stack's runtime inputs (compose `file_paths` + `EXTRA_WATCH_PATHS` additions), and deploys; LiteLLM gets a post-deploy restart to flush its in-process model cache (covers model removal too). Lives in `komodo/resources/actions.toml`. Manual override: `python3 scripts/komodo.py deploy litellm && ssh solaris '/opt/homebrew/bin/docker restart litellm'`.
@@ -59,7 +59,7 @@ If the change is "thing X is running on hyperion or solaris," it's in `homelab`.
 
 ```
 homelab/<host>/<stack>/
-  compose.yaml         # Image pinned to <tag>@sha256:<digest>; references ${VAR:?err} for everything
+  compose.yaml         # Leaf app → rolling tag (:latest/:release/major); pinned-set image → <tag>@sha256:<digest>. ${VAR:?err} for everything
   .env.example         # Documents required vars; never the real values
   <config files>       # Caddyfile fragments, prometheus rules, dashboards, etc.
 ```
