@@ -65,6 +65,27 @@ chmod +x ~/code/ai-sync/bin/ai-sync ~/code/ai-sync/bin/*.sh
 
 `ai-sync apply` requires Python 3.11+ (for `tomllib`). If Python is unavailable, [`bin/bootstrap-claude.sh`](bin/bootstrap-claude.sh) performs the safe Claude/link subset using the portable shell doctor.
 
+### Work dev containers
+
+Mounting the host's `~/.copilot` into a container is not enough by itself:
+the curated skill links also need a readable `ai-sync` checkout. Keep the
+same home-relative layout on both sides (`~/code/ai-sync`), then bootstrap the
+container without installing personal skills:
+
+```bash
+mkdir -p ~/code
+gh repo clone masonmem/ai-sync ~/code/ai-sync
+cd ~/code/ai-sync
+./install.sh --work --container
+test -r ~/.copilot/skills/ask-matt/SKILL.md
+./install.sh --work --container --check
+```
+
+The installer uses relative links so one mounted `~/.copilot` skill hub works
+from both a macOS host and its Linux container. It also rewrites legacy
+host-absolute links. If the checkout is absent in the container, `ls` can still
+show the link names even though VS Code and Copilot cannot read the skills.
+
 ### Secrets manifest
 
 [`secrets/manifest.toml`](secrets/manifest.toml) is the tracked inventory of the gitignored files in `secrets/`: per entry — file name, which hosts need it, what consumes it, and a one-line recipe for obtaining it (never the value itself). `ai-sync doctor` and `status` check it: missing required-on-this-host files fail (exit 1) with the recipe as the fix hint, loose perms warn, and unlisted files in `secrets/` warn. Adding a secret file? Add its `[[secret]]` entry in the same commit.

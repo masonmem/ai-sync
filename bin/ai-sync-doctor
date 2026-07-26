@@ -41,18 +41,37 @@ skip()  { printf '  \033[2m-\033[0m %s\n' "$*"; }
 
 resolve() { readlink -f "$1" 2>/dev/null; }
 
+relative_link_target() { # $1=link $2=target
+  python3 -c \
+    'import os, sys; print(os.path.relpath(sys.argv[2], os.path.dirname(sys.argv[1])))' \
+    "$1" "$2"
+}
+
 check_link() { # $1=link $2=expected target
-  local link=$1 want=$2 got
+  local link=$1 want=$2 relative raw
   if [ ! -L "$link" ] && [ -e "$link" ]; then
     fail "$link: real file/dir in the way (refusing to touch)"
     return
   fi
   if [ -L "$link" ] && [ "$(resolve "$link")" = "$(resolve "$want")" ]; then
-    ok "$link -> $want"
-    return
+    raw=$(readlink "$link")
+    case "$raw" in
+      /*)
+        if [ "$FIX" = 0 ]; then
+          fail "$link: absolute link is not portable into a dev container (run --fix)"
+          return
+        fi
+        ;;
+      *)
+        ok "$link -> $want"
+        return
+        ;;
+    esac
   fi
   if [ "$FIX" = 1 ]; then
-    mkdir -p "$(dirname "$link")" && ln -sfn "$want" "$link" \
+    relative=$(relative_link_target "$link" "$want") \
+      || { fail "$link: could not calculate relative target"; return; }
+    mkdir -p "$(dirname "$link")" && ln -sfn "$relative" "$link" \
       && fixed "$link -> $want" \
       || fail "$link: could not create link"
   elif [ -L "$link" ]; then
